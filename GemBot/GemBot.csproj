@@ -14,7 +14,7 @@
     <ItemGroup>
       <Folder Include="Data\Drops\" />
       <Folder Include="Data\OldUsers\" />
-      <Folder Include="Data\User\" />
+      <Folder Include="Data\Users\" />
     </ItemGroup>
 
 </Project>

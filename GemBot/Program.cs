@@ -87,7 +87,20 @@ public class GemBot
             switch (command.Data.Name)
             {
                 case "balance":
-                    await Balance(command);
+                    try
+                    {
+                        string temp = command.Data.Options.First().Value.ToString() ?? throw new InvalidOperationException();
+                        if (temp == "False")
+                        {
+                            await Balance(command, ephemeral: false);
+                            break;
+                        }
+                        await Balance(command);
+                    }
+                    catch
+                    {
+                        await Balance(command);
+                    }
                     break;
                 case "item":
                     await GetItem(command);
@@ -106,6 +119,7 @@ public class GemBot
         }
         catch (Exception e)
         {
+            Console.WriteLine(e);
             var embay = new EmbedBuilder()
                 .WithTitle("Error")
                 .WithAuthor(command.User)
@@ -114,11 +128,20 @@ public class GemBot
             await command.RespondAsync(embed:embay.Build());
         }
     }
-    private async Task Balance(SocketSlashCommand command, string atStartInfo = "**Your balance**:", bool compact = true, bool ephemeral = true)
+    private async Task Balance(SocketSlashCommand command, string atStartInfo = "**Your balance**:", bool? compactArg = null, bool ephemeral = true)
     {
+        bool compact = Tools.ShowEmojis(command, settings.BotID(), _client);
+        if (compactArg == true)
+        {
+            compact = true;
+        }
+        else if (compactArg == false)
+        {
+            compact = false;
+        }
         try
         {
-            string baseData = await File.ReadAllTextAsync($"../../../Data/User/{command.User.Id}");
+            string baseData = await File.ReadAllTextAsync($"../../../Data/Users/{command.User.Id}");
             User user = JsonConvert.DeserializeObject<User>(baseData) ?? throw new Exception("Somehow your save file is bad.");
             string text = $"{atStartInfo} {user.Gems[0]}{_currency[0]}, {user.Gems[1]}{_currency[1]}, {user.Gems[2]}{_currency[2]}, {user.Gems[3]}{_currency[3]}, {user.Gems[4]}{_currency[4]}";
             if (!compact)
@@ -164,6 +187,11 @@ public class GemBot
             }
             await File.WriteAllTextAsync($"../../../Data/Users/{id}",JsonConvert.SerializeObject(user));
             await command.RespondAsync("Migrated existing account to new gemBOT!");
+        }
+        else
+        {
+            await Tools.UserCreator(id);
+            await Balance(command, "Welcome to gemBOT! Here's your starting balance:");
         }
     }
     
@@ -214,7 +242,7 @@ public class GemBot
         var itemInfo = new SlashCommandBuilder()
             .WithName("item")
             .WithDescription("Get information about an item.")
-            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall])
+            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall])
             .AddOption("item", ApplicationCommandOptionType.Integer, "The item id of the item you would like to access.", true);
         var balance = new SlashCommandBuilder()
             .WithName("balance")
@@ -224,14 +252,6 @@ public class GemBot
                 .WithType(ApplicationCommandOptionType.Boolean)
                 .WithName("private")
                 .WithDescription("Whether to keep your balance private (ephemeral message) or show it to everyone (normal message).")
-                .WithRequired(false)
-                )
-            .AddOption(new SlashCommandOptionBuilder()
-                .WithType(ApplicationCommandOptionType.Integer)
-                .WithName("Format")
-                .WithDescription("What format do you want to show your balance in?")
-                .AddChoice("Compact", 1)
-                .AddChoice("Large",0)
                 .WithRequired(false)
             );
         try
