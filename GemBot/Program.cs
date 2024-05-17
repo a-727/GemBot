@@ -1,8 +1,4 @@
-﻿using System.ComponentModel;
-using System.Reflection;
-using System.Threading.Channels;
-using Discord;
-using Discord.Commands;
+﻿using Discord;
 using Discord.Net;
 using Discord.WebSocket;
 using Newtonsoft.Json;
@@ -13,6 +9,7 @@ public class NoTokenError : Exception
 {
     
 }
+public class UserNotFoundError() : Exception("The user was not found"){}
 public class InvalidArgumentException: Exception{}
 
 public class Cooldown : Exception
@@ -23,7 +20,7 @@ public class Cooldown : Exception
     public Cooldown (int secondsLeft): base($"You are on cooldown. Please try again in <t:{secondsLeft+DateTimeOffset.UtcNow.ToUnixTimeSeconds()}:R>"){}
 }
 
-public class Program
+public static class Program
 {
     public static async Task Main()
     {
@@ -36,8 +33,14 @@ public class GemBot
 {
     public readonly Random Rand = new ();
     private readonly DiscordSocketClient _client = new();
-    private readonly CommandService _commandService = new();
     private List<Item> _items = new();
+    private readonly string[] _currency = [
+        "<:gem_diamond:1089971521168085072>", 
+        "<:gem_emerald:1089971521985970177>", 
+        "<:gem_sapphire:1089971528550064128>", 
+        "<:gem_ruby:1089971523265237132>", 
+        "<:gem_amber:1089971518957699143>"
+    ];
     public async Task Main()
     {
         _client.Log += Log;
@@ -56,7 +59,7 @@ public class GemBot
         await _client.StartAsync();
         await Task.Delay(-1);
     }
-    public async Task GetItems()
+    private async Task GetItems()
     {
         _items = new List<Item>();
         await _client.SetGameAsync("Updating items...");
@@ -83,9 +86,6 @@ public class GemBot
         {
             switch (command.Data.Name)
             {
-                case "test":
-                    await ReadFileData(command);
-                    break;
                 case "balance":
                     await Balance(command);
                     break;
@@ -98,7 +98,11 @@ public class GemBot
         }
         catch (Cooldown cool)
         {
-            command.RespondAsync(cool.Message, ephemeral:true);
+            await command.RespondAsync(cool.Message, ephemeral: true);
+        }
+        catch (UserNotFoundError)
+        {
+            await UserSetup(command);
         }
         catch (Exception e)
         {
@@ -107,46 +111,64 @@ public class GemBot
                 .WithAuthor(command.User)
                 .WithColor(255, 0, 0)
                 .AddField("Your command generated an error", $"**Full Details**: `{e}`");
-            command.RespondAsync(embed:embay.Build());
+            await command.RespondAsync(embed:embay.Build());
         }
     }
-    private async Task ReadFileData(SocketSlashCommand command)
+    private async Task Balance(SocketSlashCommand command, string atStartInfo = "**Your balance**:", bool compact = true, bool ephemeral = true)
     {
-        string ToRespond = "";
         try
         {
-            string responce = command.Data.Options.First().Value.ToString() ?? throw new InvalidOperationException();
-            if (responce.Contains("../"))
+            string baseData = await File.ReadAllTextAsync($"../../../Data/User/{command.User.Id}");
+            User user = JsonConvert.DeserializeObject<User>(baseData) ?? throw new Exception("Somehow your save file is bad.");
+            string text = $"{atStartInfo} {user.Gems[0]}{_currency[0]}, {user.Gems[1]}{_currency[1]}, {user.Gems[2]}{_currency[2]}, {user.Gems[3]}{_currency[3]}, {user.Gems[4]}{_currency[4]}";
+            if (!compact)
             {
-                await command.RespondAsync("# Hacker Warning\n **__The person who ran this command is a suspected hacker__**\n *Here's Why*: \n > They tried to access a file outside where they were supposed to access. Nobody would try this, unless they want to steal information from my computer.");
-                return;
+                text = $"{atStartInfo}\n > **Diamonds**: {user.Gems[0]}\n > **Emeralds**: {user.Gems[1]}\n > **Sapphires**: {user.Gems[2]}\n > **Rubies**: {user.Gems[3]}\n > **Amber**: {user.Gems[4]}";
             }
-            string fileData = await File.ReadAllTextAsync($"../../../{responce}");
-            Item item = JsonConvert.DeserializeObject<Item>(fileData) ?? throw new InvalidOperationException();
-            await command.RespondAsync(
-                $"**Item {item.ID} Data**:\n > Name: *{item.Name}*\n > Emoji: {item.Emoji}\n > Description: {item.Description}");
-        }
-        catch (InvalidOperationException)
-        {
-            await command.RespondAsync("The file does not seem to be an item file.");
-        }
-        catch (JsonReaderException)
-        {
-            await command.RespondAsync("The file does not seem to be an item file.");
+            await command.RespondAsync(text, ephemeral:ephemeral);
         }
         catch (FileNotFoundException)
         {
-            await command.RespondAsync("The file was not found");
-        }
-        catch (DirectoryNotFoundException)
-        {
-            await command.RespondAsync("You can't look for a file inside a nonexistent directory");
-        }
-        catch (UnauthorizedAccessException)
-        {
-            await command.RespondAsync("This code cannot read the file, so why should you be able to read it?");
+            throw new UserNotFoundError();
         }
     }
+    private async Task GetItem(SocketSlashCommand command)
+    {
+        try
+        {
+            await command.RespondAsync(_items[int.Parse(command.Data.Options.First().Value.ToString() ?? throw new Exception("Bad parameters - there's probably an error in the code."))].ToString());
+        }
+        catch (IndexOutOfRangeException)
+        {
+            await command.RespondAsync("This item does not exist");
+        }
+    }
+    private async Task UserSetup(SocketSlashCommand command)
+    {
+        var id = command.User.Id;
+        if (Path.Exists($"../../../Data/OldUsers/{id}"))
+        {
+            User user = await Tools.UserCreator(id);
+            string inventoryRaw = await File.ReadAllTextAsync($"../../../Data/OldUsers/{id}/i");
+            string[] inventoryStrings = inventoryRaw.Split(" ");
+            user.Inventory = new List<int>();
+            foreach (string i in inventoryStrings)
+            {
+                user.Inventory.Add(int.Parse(i));
+            }
+            string balanceRaw = await File.ReadAllTextAsync($"../../../Data/OldUsers/{id}/g");
+            string[] balanceStrings = balanceRaw.Split(" ");
+            for (int i = 0; i < balanceStrings.Length; i++)
+            {
+                user.Gems[i] = int.Parse(balanceStrings[i]);
+            }
+            await File.WriteAllTextAsync($"../../../Data/Users/{id}",JsonConvert.SerializeObject(user));
+            await command.RespondAsync("Migrated existing account to new gemBOT!");
+        }
+    }
+    
+    
+    
     private async Task TextMessageHandler(SocketMessage socketMessage)
     {
         if (!settings.OwnerIDs().Contains(socketMessage.Author.Id))
@@ -158,7 +180,7 @@ public class GemBot
         {
             return;
         }
-        string[] command = new string[] { };
+        string[] command;
         if (message.StartsWith($"<@{settings.BotID()}>$")) //need to turn ulong properly to string
         {
             command = message.Split($"<@{settings.BotID()}>$")[1].Split(' ');
@@ -197,11 +219,29 @@ public class GemBot
         var balance = new SlashCommandBuilder()
             .WithName("balance")
             .WithDescription("Find out your balance")
-            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall]);
+            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall])
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithType(ApplicationCommandOptionType.Boolean)
+                .WithName("private")
+                .WithDescription("Whether to keep your balance private (ephemeral message) or show it to everyone (normal message).")
+                .WithDefault(true)
+                .WithRequired(false)
+                )
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithType(ApplicationCommandOptionType.Integer)
+                .WithName("Format")
+                .WithDescription("What format do you want to show your balance in?")
+                .AddChoice("Compact", 1)
+                .AddChoice("Large",0)
+            );
+        var signup = new SlashCommandBuilder()
+            .WithName("signup")
+            .WithDescription("Create a GemBOT account to start using GemBOT");
         try
         {
             await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
             await _client.CreateGlobalApplicationCommandAsync(balance.Build());
+            await _client.CreateGlobalApplicationCommandAsync(signup.Build());
         }
         catch(HttpException exception)
         {
@@ -209,18 +249,6 @@ public class GemBot
             Console.WriteLine(json);
         }
         await message.Channel.SendMessageAsync("Reset commands!");
-    }
-    private async Task Balance(SocketSlashCommand command)
-    {
-        try
-        {
-            string baseData = await File.ReadAllTextAsync($"../../../Data/DiscordUsers/{command.User.Id}");
-            JsonConvert.DeserializeObject<DiscordUserLoader>(baseData);
-        }
-        catch (FileNotFoundException)
-        {
-            
-        }
     }
     private async Task SetItem(SocketMessage message)
     {
@@ -241,35 +269,35 @@ public class GemBot
             {
                 case "id":
                     item.ID = int.Parse(command[3]);
-                    await File.WriteAllTextAsync(await IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     await GetItems();
                     break;
                 case "value":
                     item.Value = int.Parse(command[3]);
-                    await File.WriteAllTextAsync(await IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     await GetItems();
                     break;
                 case "name":
                     item.Name = String.Join(" ", command[3..^0]);
-                    await File.WriteAllTextAsync(await IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     await GetItems();
                     break;
                 case "emoji":
                     item.Emoji = command[3];
-                    await File.WriteAllTextAsync(await IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     await GetItems();
                     break;
                 case "description":
                     item.Description = String.Join(" ", command[3..^0]);
-                    await File.WriteAllTextAsync(await IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     await GetItems();
@@ -284,22 +312,11 @@ public class GemBot
             await message.Channel.SendMessageAsync(e.ToString());
         }
     }
-    private async Task GetItem(SocketSlashCommand command)
-    {
-        try
-        {
-            await command.RespondAsync(_items[int.Parse(command.Data.Options.First().Value.ToString())].ToString());
-        }
-        catch (IndexOutOfRangeException)
-        {
-            await command.RespondAsync("This item does not exist");
-        }
-    }
     private async Task AddItem(SocketMessage message)
     {
         _items.Add(new Item(_items.Count, description: "To be set"));
         await message.Channel.SendMessageAsync(_items[^1].ToString());
-        await File.WriteAllTextAsync(await IDString(_items.Count-1), JsonConvert.SerializeObject(_items[^1]));
+        await File.WriteAllTextAsync(IDString(_items.Count-1), JsonConvert.SerializeObject(_items[^1]));
     }
     private async Task AllItemsText(SocketMessage socketMessage)
     {
@@ -308,7 +325,7 @@ public class GemBot
             await socketMessage.Channel.SendMessageAsync(item.ToString());
         }
     }
-    private async Task<String> IDString(int id)
+    private String IDString(int id)
     {
         if (id >= 100)
         {

@@ -33,13 +33,96 @@ public class Drop
 
 public class User
 {
-    public int[] Money { get; set; }
-    public string ExternalType { get; set; }
-    public string Username { get; set; }
+    public int[] Gems { get; set; }
+    public ulong ID { get; set; }
     public string CurrentPassword { get; set; }
-    public Dictionary<string, ulong> CoolDowns { get; set; }
-    public int[] Inventory { get; set; }
-    public int[] DailyQuests { get; set; }
+    public Dictionary<string, long> CoolDowns { get; set; }
+    public List<int> Inventory { get; set; }
+    public int DailyQuestsDay { get; set; }
+    public Dictionary<string, UInt64> DailyQuestsProgress { get; set; }
+    public Dictionary<string, UInt128> Stats { get; set; }
+    public bool OnCoolDown(string about, long currentTime, int timeoutFor, bool updateCooldown = true)
+    {
+        try
+        {
+            if (currentTime >= CoolDowns[about])
+            {
+                if (updateCooldown)
+                {
+                    CoolDowns[about] = currentTime + timeoutFor;
+                }
+                return true;
+            }
+            return false;
+        }
+        catch (KeyNotFoundException)
+        {
+            if (updateCooldown)
+            {
+                CoolDowns[about] = currentTime + timeoutFor;
+            }
+            return true;
+        }
+    }
+    public void Add(int amount, int value)
+    {
+        Gems[value] += amount;
+    }
+    public void Complete(string task, int amount, int? day = null)
+    {
+        if (day is not null)
+        {
+            if (DailyQuestsDay < day)
+            {
+                DailyQuestsDay = (int)day;
+                DailyQuestsProgress = new Dictionary<string, UInt64>();
+            }
+        }
+
+        try
+        {
+            DailyQuestsProgress[task] += (UInt64) amount;
+        }
+        catch
+        {
+            DailyQuestsProgress[task] = (UInt64) amount;
+        }
+    }
+    public UInt64 GetProgress(string task)
+    {
+        try
+        {
+            return DailyQuestsProgress[task];
+        }
+        catch
+        {
+            DailyQuestsProgress[task] = 0;
+            return DailyQuestsProgress[task];
+        }
+    }
+    public void IncreaseStat(string stat, int amount)
+    {
+        try
+        {
+            Stats[stat] += (UInt128) amount;
+        }
+        catch
+        {
+            Stats[stat] = (UInt128) amount;
+        }
+    }
+    public UInt128 GetStat(string stat)
+    {
+        try
+        {
+            return Stats[stat];
+        }
+        catch
+        {
+            Stats[stat] = 0;
+            return Stats[stat];
+        }
+    }
 }
 
 public class DailyQuest

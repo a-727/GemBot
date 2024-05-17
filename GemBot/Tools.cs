@@ -22,34 +22,22 @@ public class Tools
 
         return toReturn;
     }
-    public async static Task<User> UserCreator(string username, int numberOfItems)
+    public async static Task<User> UserCreator(ulong id)
     {
-        if (File.Exists($"../../../Data/Users/{username}"))
+        if (File.Exists($"../../../Data/Users/{id}"))
         {
-            throw new UserExistsException(username);
+            throw new UserExistsException(id.ToString());
         }
         User user = new User();
-        user.Username = username;
-        user.Inventory = new int[numberOfItems];
+        user.ID = id;
+        user.Inventory = new List<int>();
+        user.Gems = [0, 0, 1, 5, 20];
+        user.CurrentPassword = RandomPasswordGenerator();
+        user.CoolDowns = new Dictionary<string, long>();
+        user.DailyQuestsDay = 0;
+        user.DailyQuestsProgress = new Dictionary<string, ulong>();
+        user.Stats = new Dictionary<string, UInt128>();
+        await File.WriteAllTextAsync($"../../../Data/Users/{id}",JsonConvert.SerializeObject(user));
         return user;
-    }
-}
-public class DiscordUserLoader
-{
-    public class UserLoaderException() : Exception("A user could not be loaded");
-    public int DiscordID { get; set; }
-    public string InternalUsername { get; set; }
-
-    public async Task<User> Load()
-    {
-        try
-        {
-            string fileData = await File.ReadAllTextAsync($"../../../Data/Users/{InternalUsername}");
-            return JsonConvert.DeserializeObject<User>(fileData) ?? throw new InvalidOperationException();
-        }
-        catch
-        {
-            throw new UserLoaderException();
-        }
     }
 }

@@ -11,4 +11,10 @@
       <PackageReference Include="Discord.Net" Version="3.14.1" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="Data\Drops\" />
+      <Folder Include="Data\OldUsers\" />
+      <Folder Include="Data\User\" />
+    </ItemGroup>
+
 </Project>
