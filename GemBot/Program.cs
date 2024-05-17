@@ -224,7 +224,6 @@ public class GemBot
                 .WithType(ApplicationCommandOptionType.Boolean)
                 .WithName("private")
                 .WithDescription("Whether to keep your balance private (ephemeral message) or show it to everyone (normal message).")
-                .WithDefault(true)
                 .WithRequired(false)
                 )
             .AddOption(new SlashCommandOptionBuilder()
@@ -233,15 +232,12 @@ public class GemBot
                 .WithDescription("What format do you want to show your balance in?")
                 .AddChoice("Compact", 1)
                 .AddChoice("Large",0)
+                .WithRequired(false)
             );
-        var signup = new SlashCommandBuilder()
-            .WithName("signup")
-            .WithDescription("Create a GemBOT account to start using GemBOT");
         try
         {
             await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
             await _client.CreateGlobalApplicationCommandAsync(balance.Build());
-            await _client.CreateGlobalApplicationCommandAsync(signup.Build());
         }
         catch(HttpException exception)
         {
