@@ -1,3 +1,6 @@
+using System.Text.Json.Nodes;
+using Newtonsoft.Json;
+
 namespace GemBot;
 
 public class Item
@@ -39,7 +42,7 @@ public class User
     public Dictionary<string, long> CoolDowns { get; set; }
     public List<int> Inventory { get; set; }
     public int DailyQuestsDay { get; set; }
-    public Dictionary<string, UInt64> DailyQuestsProgress { get; set; }
+    public Dictionary<string, ulong> DailyQuestsProgress { get; set; }
     public Dictionary<string, UInt128> Stats { get; set; }
     public bool OnCoolDown(string about, long currentTime, int timeoutFor, bool updateCooldown = true)
     {
@@ -88,7 +91,7 @@ public class User
             DailyQuestsProgress[task] = (UInt64) amount;
         }
     }
-    public UInt64 GetProgress(string task)
+    public ulong GetProgress(string task)
     {
         try
         {
@@ -122,6 +125,14 @@ public class User
             Stats[stat] = 0;
             return Stats[stat];
         }
+    }
+    public async Task Save(ulong id = default)
+    {
+        if (id == default)
+        {
+            id = ID;
+        }
+        await File.WriteAllTextAsync($"../../../Data/Users/{id}", JsonConvert.SerializeObject(this));
     }
 }
 

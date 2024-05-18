@@ -75,6 +75,19 @@ public class GemBot
         _items = _items.OrderBy(o=>o.ID).ToList();
         await _client.SetGameAsync("/start");
     }
+    private async Task<User> GetUser(ulong id)
+    {
+        try
+        {
+            string baseData = await File.ReadAllTextAsync($"../../../Data/Users/{id}");
+            return JsonConvert.DeserializeObject<User>(baseData) ??
+                   throw new Exception("Somehow your save file is bad.");
+        }
+        catch (FileNotFoundException)
+        {
+            throw new UserNotFoundError();
+        }
+    }
     private Task Log(LogMessage msg)
     {
         Console.WriteLine(msg.ToString());
@@ -105,8 +118,15 @@ public class GemBot
                 case "item":
                     await GetItem(command);
                     break;
+                case "stats":
+                    await Stats(command);
+                    break;
+                case "beg":
+                    await Beg(command);
+                    break;
                 default:
-                    throw new Cooldown(250);
+                    await command.RespondAsync("Command not found", ephemeral: true);
+                    break;
             }
         }
         catch (Cooldown cool)
@@ -139,21 +159,13 @@ public class GemBot
         {
             compact = false;
         }
-        try
+        User user = await GetUser(command.User.Id);
+        string text = $"{atStartInfo} {user.Gems[0]}{_currency[0]}, {user.Gems[1]}{_currency[1]}, {user.Gems[2]}{_currency[2]}, {user.Gems[3]}{_currency[3]}, {user.Gems[4]}{_currency[4]}";
+        if (!compact)
         {
-            string baseData = await File.ReadAllTextAsync($"../../../Data/Users/{command.User.Id}");
-            User user = JsonConvert.DeserializeObject<User>(baseData) ?? throw new Exception("Somehow your save file is bad.");
-            string text = $"{atStartInfo} {user.Gems[0]}{_currency[0]}, {user.Gems[1]}{_currency[1]}, {user.Gems[2]}{_currency[2]}, {user.Gems[3]}{_currency[3]}, {user.Gems[4]}{_currency[4]}";
-            if (!compact)
-            {
-                text = $"{atStartInfo}\n > **Diamonds**: {user.Gems[0]}\n > **Emeralds**: {user.Gems[1]}\n > **Sapphires**: {user.Gems[2]}\n > **Rubies**: {user.Gems[3]}\n > **Amber**: {user.Gems[4]}";
-            }
-            await command.RespondAsync(text, ephemeral:ephemeral);
+            text = $"{atStartInfo}\n > **Diamonds**: {user.Gems[0]}\n > **Emeralds**: {user.Gems[1]}\n > **Sapphires**: {user.Gems[2]}\n > **Rubies**: {user.Gems[3]}\n > **Amber**: {user.Gems[4]}";
         }
-        catch (FileNotFoundException)
-        {
-            throw new UserNotFoundError();
-        }
+        await command.RespondAsync(text, ephemeral:ephemeral);
     }
     private async Task GetItem(SocketSlashCommand command)
     {
@@ -194,7 +206,30 @@ public class GemBot
             await Balance(command, "Welcome to gemBOT! Here's your starting balance:");
         }
     }
-    
+    private async Task Stats(SocketSlashCommand command)
+    {
+        User user = await GetUser(command.User.Id);
+        EmbedBuilder embay = new EmbedBuilder()
+            .WithTitle($"{command.User.Username}'s stats")
+            .WithDescription($"View all the stats for {command.User.Username}.")
+            .WithFooter(new EmbedFooterBuilder().WithText("GemBOT Stats may not be 100% accurate."))
+            .AddField("Commands Ran", $"{user.GetStat("commands")} commands")
+            .AddField("Gems Earned", $"{user.GetStat("earned")} diamond-equivalents (one diamond is 1, one emerald is 10, one sapphire is 100, one ruby is 1000, and one amber is 10000): earned by grinding only.");
+        await command.RespondAsync(embed:embay.Build());
+    }
+    private async Task Beg(SocketSlashCommand command)
+    {
+        User user = await GetUser(command.User.Id);
+        int amnt = Rand.Next(5, 9);
+        user.Add(amnt, 0);
+        string text = $"You gained {amnt} **Diamonds**.";
+        if (Tools.ShowEmojis(command, settings.BotID(), _client))
+        {
+            text = $"You gained {amnt}{_currency[0]}!!!";
+        }
+        await user.Save();
+        await command.RespondAsync(text);
+    }
     
     
     private async Task TextMessageHandler(SocketMessage socketMessage)
@@ -239,12 +274,12 @@ public class GemBot
     private async Task ResetCommands(SocketMessage message)
     {
         await _client.Rest.DeleteAllGlobalCommandsAsync();
-        var itemInfo = new SlashCommandBuilder()
+        SlashCommandBuilder itemInfo = new SlashCommandBuilder()
             .WithName("item")
             .WithDescription("Get information about an item.")
             .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall])
             .AddOption("item", ApplicationCommandOptionType.Integer, "The item id of the item you would like to access.", true);
-        var balance = new SlashCommandBuilder()
+        SlashCommandBuilder balance = new SlashCommandBuilder()
             .WithName("balance")
             .WithDescription("Find out your balance")
             .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall])
@@ -254,10 +289,18 @@ public class GemBot
                 .WithDescription("Whether to keep your balance private (ephemeral message) or show it to everyone (normal message).")
                 .WithRequired(false)
             );
+        SlashCommandBuilder stats = new SlashCommandBuilder()
+            .WithName("stats")
+            .WithDescription("Figure out your stats");
+        SlashCommandBuilder beg = new SlashCommandBuilder()
+            .WithName("beg")
+            .WithDescription("Beg for diamonds!");
         try
         {
             await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
             await _client.CreateGlobalApplicationCommandAsync(balance.Build());
+            await _client.CreateGlobalApplicationCommandAsync(stats.Build());
+            await _client.CreateGlobalApplicationCommandAsync(beg.Build());
         }
         catch(HttpException exception)
         {
