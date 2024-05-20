@@ -173,6 +173,11 @@ public class User
             return defaultValue;
         }
     }
+    public async Task SetSetting(string setting, ulong value)
+    {
+        Settings[setting] = value;
+        await Save();
+    }
     
     private async Task Save(ulong id = default)
     {

@@ -342,11 +342,18 @@ public class GemBot
     {
         User user = await GetUser(command.User.Id);
         ulong t = (ulong)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
-        if (await user.OnCoolDown("work", t, 12)) { throw new Cooldown(user.CoolDowns["work"]); }
+        if (await user.OnCoolDown("magik", t, 12)) { throw new Cooldown(user.CoolDowns["magik"]); }
         int power =  await Tools.CharmEffect(["Magik", "Unlocker", "Positive"], _items, user);
         ulong targetID;
-        try { targetID = ((SocketGuildUser)command.Data.Options.First().Value).Id; }
-        catch { targetID = await user.GetSetting("magikID", user.ID); }
+        try
+        {
+            targetID = ((SocketGuildUser)command.Data.Options.First().Value).Id;
+                if (command.Data.Options.Last().Value.ToString() == "yes")
+                {
+                    await user.SetSetting("magikID", targetID);
+                }
+        }
+        catch (InvalidOperationException) { targetID = await user.GetSetting("magikID", user.ID); }
         User target = await GetUser(targetID);
         if (targetID != user.ID) { power += 3; }
         power += _rand.Next(0, 2);
@@ -354,7 +361,7 @@ public class GemBot
         List<Tuple<string, int, int, int, int, int>> chances = [new Tuple<string, int, int, int, int, int>("You gained 8$diamonds.", 8, 0, 1, 0, 9), new Tuple<string, int, int, int, int, int>("You gained 1$emeralds.", 1, 0, 0, 0, 4), new Tuple<string, int, int, int, int, int>("Nothing happened", 0, 0, 0, 0, 7), new Tuple<string, int, int, int, int, int>("$target gained 10$diamonds", 0, 0, 10, 0, 6)];
         if (power >= 1)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 7$diamonds1", 7, 0, 7, 0, 10));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 7$diamonds", 7, 0, 7, 0, 10));
             chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 8$diamonds", 8, 0, 8, 0, 4));
         }
         if (power >= 3)
@@ -421,7 +428,8 @@ public class GemBot
         string diamonds = " **diamonds**";
         string emeralds = " **emeralds**";
         string sapphires = " **sapphires**";
-        if (Tools.ShowEmojis(command, settings.BotID(), _client))
+        bool emoji = Tools.ShowEmojis(command, settings.BotID(), _client);
+        if (emoji)
         {
             diamonds = _currency[0];
             emeralds = _currency[1];
@@ -435,17 +443,77 @@ public class GemBot
             .Replace("$target", $"<@{target.ID}>")
             .Replace("$user_charm", "`")
             .Replace("$user_charm2", "~")
-            .Replace("$target_charm", "!")
+            .Replace("$target_charm", "%")
             .Replace("$target_charm2", "¡")
             .Replace("$user_wand", "*")
             .Replace("$target_ward", "•");
         foreach (char c in toRespond)
         {
-            if (c == '`')
+            switch (c)
             {
-                int itemID = Tools.GetCharm(_itemLists, 0, 99);
+                case '`':
+                {
+                    int itemID = Tools.GetCharm(_itemLists, 0, 99);
+                    await user.GainItem(itemID, 1);
+                    toRespond = toRespond.Replace("`", emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
+                    break;
+                }
+                case '~':
+                {
+                    int itemID = Tools.GetCharm(_itemLists, 0, 99);
+                    await user.GainItem(itemID, 1);
+                    toRespond = toRespond.Replace("~", emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
+                    break;
+                }
+                case '%':
+                {
+                    int itemID = Tools.GetCharm(_itemLists, 0, 99);
+                    await target.GainItem(itemID, 1);
+                    toRespond = toRespond.Replace("%", emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
+                    break;
+                }
+                case '¡':
+                {
+                    int itemID = Tools.GetCharm(_itemLists, 0, 199);
+                    await target.GainItem(itemID, 1);
+                    toRespond = toRespond.Replace("¡", emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
+                    break;
+                }
+                case '*':
+                {
+                    await user.GainItem(10, 1);
+                    toRespond = toRespond.Replace("¡", emoji ? $"1{_items[10].Emoji}" : $"1 **{_items[10].Name}**");
+                    break;
+                }
+                case '•':
+                {
+                    await target.GainItem(10, 1);
+                    toRespond = toRespond.Replace("¡", emoji ? $"1{_items[10].Emoji}" : $"1 **{_items[10].Name}**");
+                    break;
+                }
             }
         }
+
+        EmbedBuilder embay = new EmbedBuilder()
+            .WithTitle("Magik Time!")
+            .WithDescription(toRespond)
+            .WithFooter($"Magik by gemBOT: {power} power!");
+        string topText = power switch
+        {
+            0 => "Good Magik!",
+            1 => "Thin air Magiked!",
+            2 => "Magik Power!",
+            3 => "Double thin air Magiked!",
+            4 => "Magik! Magik! Magik!",
+            5 => "Sparks shoot out of your wand, and...",
+            6 => "Magik sparks shoot out of your wand, and...",
+            7 => "Okay, I know you did an elaborate setup to get this text.",
+            8 => "A Magik ball shoots out of your wand, and...",
+            9 => "A large Magik Ball shoots ouf of your Magik wand, and Magik happened...",
+            10 => "AI AI AI AI AI AI - every big tech CEO ever, because they can't do Magik as good as you...",
+            _ => "You're probably cheating at this point..."
+        };
+        await command.RespondAsync(topText, embed: embay.Build());
     }
 
     private async Task InventoryButton(SocketMessageComponent component, string settings)
@@ -587,9 +655,16 @@ public class GemBot
             .WithName("magik")
             .WithDescription("Magik up gems (target a friend to get better results)")
             .AddOption(new SlashCommandOptionBuilder()
-                .WithName("Target")
+                .WithName("target")
                 .WithDescription("Who else should get gems?")
                 .WithType(ApplicationCommandOptionType.User)
+            )
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("save")
+                .WithDescription("Save the specified target and set it as default?")
+                .WithType(ApplicationCommandOptionType.String)
+                .AddChoice("yes", "yes")
+                .AddChoice("no", "no")
             );
         try
         {

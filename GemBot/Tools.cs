@@ -40,7 +40,7 @@ public static class Tools
     public static int GetCharm(Dictionary<string, List<int>> itemLists, int startingRarity = 0, int upgradeDiff = 11, Random? randomParam = null, string[]? rarityToListParam = null)
     {
         Random random = randomParam ?? new Random();
-        string[] rarityToList = rarityToListParam ?? [];
+        string[] rarityToList = rarityToListParam ?? ["CommonCharms", "UncommonCharms", "RareCharms", "EpicCharms", "LegendaryCharms"];
         if (random.Next(0, upgradeDiff + 1) == upgradeDiff && startingRarity < 4)
         {
             return GetCharm(itemLists, startingRarity + 1, upgradeDiff);
