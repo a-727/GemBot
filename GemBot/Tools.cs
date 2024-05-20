@@ -11,36 +11,42 @@ public class UserExistsException(string username = "") : Exception($"Username {u
 }
 public static class Tools
 {
-    private static string RandomPasswordGenerator()
-    {
-        const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()+-=";
-        Random random = new Random();
-        string toReturn = "";
-
-        for (int i = 0; i < 10; i++)
-        {
-            toReturn += chars[random.Next(chars.Length)];
-        }
-
-        return toReturn;
-    }
     public static async Task<User> UserCreator(ulong id)
     {
         if (File.Exists($"../../../Data/Users/{id}"))
         {
             throw new UserExistsException(id.ToString());
         }
-        User user = new User();
-        user.ID = id;
-        user.Inventory = new List<int>();
-        user.Gems = [20, 5, 1, 0, 0];
-        user.CurrentPassword = RandomPasswordGenerator();
-        user.CoolDowns = new Dictionary<string, long>();
-        user.DailyQuestsDay = 0;
-        user.DailyQuestsProgress = new Dictionary<string, ulong>();
-        user.Stats = new Dictionary<string, UInt128>();
+        User user = new User { ID = id };
         await File.WriteAllTextAsync($"../../../Data/Users/{id}",JsonConvert.SerializeObject(user));
         return user;
+    }
+    public static async Task<int> CharmEffect(string[] effects, List<Item> items, User user)
+    {
+        int toReturn = 0;
+        for (int i = 0; i < items.Count; i++)
+        {
+            Item item = items[i];
+            bool has = await user.ItemAmount(i) > 0;
+            if (!has) continue;
+            foreach (Charm charm in item.Charms)
+            {
+                if (!effects.Contains(charm.Effect)) continue;
+                toReturn += charm.Amount;
+            }
+        }
+        return toReturn;
+    }
+    public static int GetCharm(Dictionary<string, List<int>> itemLists, int startingRarity = 0, int upgradeDiff = 11, Random? randomParam = null, string[]? rarityToListParam = null)
+    {
+        Random random = randomParam ?? new Random();
+        string[] rarityToList = rarityToListParam ?? [];
+        if (random.Next(0, upgradeDiff + 1) == upgradeDiff && startingRarity < 4)
+        {
+            return GetCharm(itemLists, startingRarity + 1, upgradeDiff);
+        }
+        List<int> itemChoice = itemLists[rarityToList[startingRarity]];
+        return itemChoice[random.Next(itemChoice.Count)];
     }
     public static bool ShowEmojis(SocketSlashCommand command, ulong botID, DiscordSocketClient client)
         //The SocketSlashCommand is required for several checks, and the botID is required if the bot is used within a server. The client is required to get the SocketGuildUser.

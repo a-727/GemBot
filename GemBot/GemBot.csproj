@@ -13,6 +13,7 @@
 
     <ItemGroup>
       <Folder Include="Data\Drops\" />
+      <Folder Include="Data\ItemLists\" />
       <Folder Include="Data\OldUsers\" />
       <Folder Include="Data\Users\" />
     </ItemGroup>
