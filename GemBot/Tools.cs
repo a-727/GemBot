@@ -11,6 +11,58 @@ public class UserExistsException(string username = "") : Exception($"Username {u
 }
 public static class Tools
 {
+    public static ulong CurrentTime()
+    {
+        ulong t = (ulong)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
+        return t;
+    }
+    public static async Task<CachedUser> UpdateTutorial(string done, List<Tutorial> tutorials, CachedUser user, SocketSlashCommand command)
+    {
+        if (user.TutorialOn == null) return user;
+        Tutorial tutorial = tutorials[(int)user.TutorialOn];
+        Step step = tutorial.Steps[user.TutorialPage];
+        user.TutorialProgress ??= new bool[step.Requirements.Length];
+        if (step.Flexible)
+        {
+            for (int i = 0; i < step.Requirements.Length; i++)
+            {
+                if (step.Requirements[i] != done) continue;
+                user.TutorialProgress[i] = true;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < step.Requirements.Length; i++)
+            {
+                if (user.TutorialProgress[i]) continue;
+                if (step.Requirements[i] == done)
+                {
+                    user.TutorialProgress[i] = true;
+                }
+                break;
+            }
+        }
+
+        if (!user.TutorialProgress.All(c => c)) return user;
+        if (user.TutorialPage < tutorial.Steps.Count - 1)
+        {
+            user.TutorialPage++;
+            step = tutorial.Steps[user.TutorialPage];
+            user.TutorialProgress = new bool[step.Requirements.Length];
+            EmbedBuilder embay = new EmbedBuilder()
+                .WithTitle($"{tutorial.Name}: {step.Name}")
+                .WithDescription(step.Description);
+            await command.Channel.SendMessageAsync($"<@{user.User.ID}> you have completed a step in the following tutorial! Below is what to do next:", embed: embay.Build());
+        }
+        else
+        {
+            user.TutorialPage = 0;
+            user.TutorialProgress = null;
+            user.TutorialOn = null;
+            await command.Channel.SendMessageAsync($"<@{user.User.ID}> you have completed your current tutorial! Use `/start` to start a new one!");
+        }
+        return user;
+    }
     public static async Task<User> UserCreator(ulong id)
     {
         if (File.Exists($"../../../Data/Users/{id}"))

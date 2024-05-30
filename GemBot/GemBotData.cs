@@ -1,3 +1,4 @@
+using Discord;
 using Newtonsoft.Json;
 
 namespace GemBot;
@@ -36,13 +37,13 @@ public class Drop
 public class User
 {
     public int[] Gems { get; set; } = [20, 5, 1, 0, 0];
-    public ulong ID { get; set; }
     public Dictionary<string, ulong> CoolDowns { get; set; } = [];
     public List<int> Inventory { get; set; } = [];
     public int DailyQuestsDay { get; set; }
     public Dictionary<string, UInt32> DailyQuestsProgress { get; set; } = [];
     public Dictionary<string, ulong> Stats { get; set; } = [];
     public Dictionary<string, ulong> Settings { get; set; } = [];
+    public ulong ID { get; set; }
     public async Task<int> ItemAmount(int id)
     {
         try
@@ -104,17 +105,16 @@ public class User
         Gems[value] += amount;
         if (save) { await Save(); }
     }
-    public void Complete(string task, int amount, int? day = null)
+    public void UpdateDay(int day)
     {
-        if (day is not null)
+        if (DailyQuestsDay < day)
         {
-            if (DailyQuestsDay < day)
-            {
-                DailyQuestsDay = (int)day;
-                DailyQuestsProgress = new Dictionary<string, UInt32>();
-            }
+            DailyQuestsDay = day;
+            DailyQuestsProgress = new Dictionary<string, UInt32>();
         }
-
+    }
+    public void Complete(string task, int amount)
+    {
         try
         {
             DailyQuestsProgress[task] += (UInt32) amount;
@@ -136,7 +136,7 @@ public class User
             return DailyQuestsProgress[task];
         }
     }
-    public async Task IncreaseStat(string stat, int amount, bool save = true)
+    public void IncreaseStat(string stat, int amount)
     {
         try
         {
@@ -146,7 +146,13 @@ public class User
         {
             Stats[stat] = (ulong) amount;
         }
+    }
+    public async Task Increase(string stat, int amount, bool save = true)
+    {
+        IncreaseStat(stat, amount);
+        Complete(stat, amount);
         if (save) { await Save(); }
+        
     }
     public UInt128 GetStat(string stat)
     {
@@ -178,14 +184,20 @@ public class User
         Settings[setting] = value;
         await Save();
     }
-    
     private async Task Save(ulong id = default)
     {
         if (id == default)
         {
             id = ID;
         }
-        await File.WriteAllTextAsync($"../../../Data/Users/{id}", JsonConvert.SerializeObject(this));
+        string dat = JsonConvert.SerializeObject(this, Formatting.None)
+            .Insert(1, "\n    ")
+            .Replace("],", "],\n    ")
+            .Replace("},", "},\n    ")
+            .Replace("\":", "\": ")
+            .Replace(",", ", ");
+        dat = dat.Insert(dat.Length-1, "\n");
+        await File.WriteAllTextAsync($"../../../Data/Users/{id}", dat);
     }
 }
 
@@ -206,4 +218,14 @@ public class Charm(string effect = "Charm", int amount = 0)
     {
         return $"**Effect**: {Effect}, **Multiplier**: {Amount}";
     }
+}
+
+
+public class CachedUser (User user, ulong time)
+{
+    public User User { get; set; } = user;
+    public int? TutorialOn = null;
+    public int TutorialPage = 0;
+    public bool[]? TutorialProgress = null;
+    public ulong InactiveSince = time;
 }
