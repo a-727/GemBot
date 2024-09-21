@@ -211,7 +211,7 @@ public class User
             .Replace("\":", "\": ")
             .Replace(",", ", ");
         dat = dat.Insert(dat.Length-1, "\n");
-        await File.WriteAllTextAsync($"../../../Data/Users/{id}", dat);
+        await File.WriteAllTextAsync($"/Data/Users/{id}", dat);
     }
 }
 
