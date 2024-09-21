@@ -1,4 +1,4 @@
-using Discord;
+using Discord.Rest;
 using Newtonsoft.Json;
 
 namespace GemBot;
@@ -39,8 +39,9 @@ public class User
     public int[] Gems { get; set; } = [20, 5, 1, 0, 0];
     public Dictionary<string, ulong> CoolDowns { get; set; } = [];
     public List<int> Inventory { get; set; } = [];
-    public int DailyQuestsDay { get; set; }
-    public Dictionary<string, UInt32> DailyQuestsProgress { get; set; } = [];
+    public uint DailyQuestsDay { get; set; }
+    public bool[] DailyQuestsCompleted { get; set; } = new bool[5];
+    public Dictionary<string, uint> DailyQuestsProgress { get; set; } = [];
     public Dictionary<string, ulong> Stats { get; set; } = [];
     public Dictionary<string, ulong> Settings { get; set; } = [];
     public ulong ID { get; set; }
@@ -105,13 +106,12 @@ public class User
         Gems[value] += amount;
         if (save) { await Save(); }
     }
-    public void UpdateDay(int day)
+    public void UpdateDay(uint day)
     {
-        if (DailyQuestsDay < day)
-        {
-            DailyQuestsDay = day;
-            DailyQuestsProgress = new Dictionary<string, UInt32>();
-        }
+        if (DailyQuestsDay >= day) return;
+        DailyQuestsDay = day;
+        DailyQuestsProgress = new Dictionary<string, UInt32>();
+        DailyQuestsCompleted = new bool[5];
     }
     public void Complete(string task, int amount)
     {
@@ -201,14 +201,26 @@ public class User
     }
 }
 
-public class DailyQuest
+public class DailyQuest (int id = 99, string rarity = "Common")
 {
-    public int Date { get; set; }
-    public string Requirement { get; set; }
-    public int Amount { get; set; }
-    public string Description { get; set; }
+    public uint Date { get; set; } = 0;
+    public string Requirement { get; set; } = "beg";
+    public uint Amount { get; set; } = 1;
+    public string Description { get; set; } = "To set";
+    public string Name { get; set; } = "Quest";
+    public int ID { get; set; } = id;
+    public string Rarity { get; set; } = rarity;
+    public override string ToString()
+    {
+        return $"""
+                **{Rarity} Quest {ID}**:
+                 > *Name*: {Name}
+                 > *Requirement*: {Amount} x {Requirement}
+                 > *Description*: {Description}
+                 > *Date*: {Date}
+                """;
+    }
 }
-
 
 public class Charm(string effect = "Charm", int amount = 0)
 {
@@ -220,12 +232,16 @@ public class Charm(string effect = "Charm", int amount = 0)
     }
 }
 
-
 public class CachedUser (User user, ulong time)
 {
     public User User { get; set; } = user;
     public int? TutorialOn = null;
+    public RestInteractionMessage? LastQuestsMessage = null;
     public int TutorialPage = 0;
     public bool[]? TutorialProgress = null;
     public ulong InactiveSince = time;
+    public static implicit operator User (CachedUser x)
+    {
+        return x.User;
+    }
 }

@@ -12,6 +12,9 @@
     </ItemGroup>
 
     <ItemGroup>
+      <Folder Include="Data\DailyQuests\0common\" />
+      <Folder Include="Data\DailyQuests\1uncommon\" />
+      <Folder Include="Data\DailyQuests\2rare\" />
       <Folder Include="Data\Drops\" />
       <Folder Include="Data\ItemLists\" />
       <Folder Include="Data\Lists\" />

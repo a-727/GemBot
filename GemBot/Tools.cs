@@ -16,6 +16,50 @@ public static class Tools
         ulong t = (ulong)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
         return t;
     }
+    public static uint CurrentDay()
+    {
+        uint t = (uint)Math.Floor((DateTime.UtcNow - new DateTime(2024, 6, 1)).TotalDays);
+        return t;
+    }
+    public static string ProgressBar(int done, int total, bool full = true)
+    {
+        if (full)
+        {
+            int percentage = done * 100 / total;
+            string toReturn = percentage switch
+            {
+                0 => "<:progress1E:1247189493124169779><:progress2E:1247189498044088391><:progress3E:1247189506319450172>",
+                <= 10 => "<:progress1P:1247189496097800313><:progress2E:1247189498044088391><:progress3E:1247189506319450172>",
+                <= 20 => "<:progress1H:1247189495233908778><:progress2E:1247189498044088391><:progress3E:1247189506319450172>",
+                <= 30 => "<:progress1F:1247189494071820341><:progress2E:1247189498044088391><:progress3E:1247189506319450172>",
+                <= 40 => "<:progress1C:1247189491979128902><:progress2P:1247189813841629274><:progress3E:1247189506319450172>",
+                <= 50 => "<:progress1C:1247189491979128902><:progress2H:1247189812591460565><:progress3E:1247189506319450172>",
+                <= 60 => "<:progress1C:1247189491979128902><:progress2M:1247189502674337973><:progress3E:1247189506319450172>",
+                <= 70 => "<:progress1C:1247189491979128902><:progress2F:1247189499255984239><:progress3E:1247189506319450172>",
+                <= 80 => "<:progress1C:1247189491979128902><:progress2C:1247189496798122016><:progress3P:1247189513311354890>",
+                <= 90 => "<:progress1C:1247189491979128902><:progress2C:1247189496798122016><:progress3H:1247189509716709417>",
+                < 100 => "<:progress1C:1247189491979128902><:progress2C:1247189496798122016><:progress3M:1247189815762616320>",
+                _ => "<:progress1C:1247189491979128902><:progress2C:1247189496798122016><:progress3F:1247189814718107648>"
+            };
+            return toReturn;
+        }
+        else
+        {
+            int percentage = done * 100 / total;
+            string toReturn = percentage switch
+            {
+                0 => "<:progress1E:1247189493124169779><:progress3E:1247189506319450172>",
+                <= 17 => "<:progress1P:1247189496097800313><:progress3E:1247189506319450172>",
+                <= 33 => "<:progress1H:1247189495233908778><:progress3E:1247189506319450172>",
+                <= 50 => "<:progress1F:1247189494071820341><:progress3E:1247189506319450172>",
+                <= 66 => "<:progress1C:1247189491979128902><:progress3P:1247189513311354890>",
+                <= 83 => "<:progress1C:1247189491979128902><:progress3H:1247189509716709417>",
+                < 100 => "<:progress1C:1247189491979128902><:progress3M:1247189815762616320>",
+                _ => "<:progress1C:1247189491979128902><:progress3F:1247189814718107648>"
+            };
+            return toReturn;
+        }
+    }
     public static async Task<CachedUser> UpdateTutorial(string done, List<Tutorial> tutorials, CachedUser user, SocketSlashCommand command)
     {
         if (user.TutorialOn == null) return user;
@@ -103,11 +147,16 @@ public static class Tools
     public static bool ShowEmojis(SocketSlashCommand command, ulong botID, DiscordSocketClient client)
         //The SocketSlashCommand is required for several checks, and the botID is required if the bot is used within a server. The client is required to get the SocketGuildUser.
     {
+        if (Settings.AppEmoji())
+        {
+            return true;
+        }
         SocketGuildUser user;
         if (command.Channel == null) 
             //The channel is only ever null IF it is run in a server it doesn't have access to the channels. IE: User Apps run as a User App.
         {
-            return false; //Since it is a User App, we can say it can't show custom emojis, hence the false return.
+            return true; //Since it is a User App, we can say it can show custom emojis, hence the true return.
+            //It used to be the false but now user apps can use emojis.
         }
         try
         {
