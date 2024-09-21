@@ -27,6 +27,10 @@ public static class Program
 {
     public static async Task Main()
     {
+        while (!Directory.GetCurrentDirectory().EndsWith(Settings.CurrentDirectoryName()))
+        {
+            Directory.SetCurrentDirectory("..");
+        }
         GemBot gemBot = new GemBot();
         await gemBot.Main();
     }
@@ -54,7 +58,7 @@ public class GemBot
         string token;
         try
         {
-            token = await File.ReadAllTextAsync("../../../token.txt");
+            token = await File.ReadAllTextAsync("token.txt");
         }
         catch
         {
@@ -72,7 +76,7 @@ public class GemBot
         _items = [];
         _users = new Dictionary<ulong, CachedUser>();
         _tutorials = await Tutorial.LoadAll(2);
-        foreach (string path in Directory.GetFiles("../../../Data/Items"))
+        foreach (string path in Directory.GetFiles("Data/Items"))
         {
             string itemData = await File.ReadAllTextAsync(path);
             Item? item = JsonConvert.DeserializeObject<Item>(itemData);
@@ -84,7 +88,7 @@ public class GemBot
         _items = _items.OrderBy(o => o.ID).ToList();
 
         _itemLists = new Dictionary<string, List<int>>();
-        foreach (string path in Directory.GetFiles("../../../Data/ItemLists"))
+        foreach (string path in Directory.GetFiles("Data/ItemLists"))
         {
             string name = path.Split('/')[^1].Split('.')[0];
             List<int>? list = JsonConvert.DeserializeObject<List<int>>(await File.ReadAllTextAsync(path));
@@ -96,7 +100,7 @@ public class GemBot
         }
 
         _dataLists = new Dictionary<string, List<string>>();
-        foreach (string path in Directory.GetFiles("../../../Data/Lists"))
+        foreach (string path in Directory.GetFiles("Data/Lists"))
         {
             string name = path.Split('/')[^1].Split('.')[0];
             List<string>? list = JsonConvert.DeserializeObject<List<string>>(await File.ReadAllTextAsync(path));
@@ -108,7 +112,7 @@ public class GemBot
         }
 
         _allQuests = [];
-        List<string> paths = [..Directory.GetDirectories("../../../Data/DailyQuests")];
+        List<string> paths = [..Directory.GetDirectories("Data/DailyQuests")];
         paths.Sort();
         foreach (string directory in paths)
         {
@@ -126,7 +130,7 @@ public class GemBot
         }
 
         _quests = [];
-        string tempString = await File.ReadAllTextAsync("../../../Data/DailyQuests/DateQuestsMap.txt");
+        string tempString = await File.ReadAllTextAsync("Data/DailyQuests/DateQuestsMap.txt");
         List<int> tempListInt = JsonConvert.DeserializeObject<List<int>>(tempString) ?? [0];
         if (tempListInt[0] == Tools.CurrentDay())
         {
@@ -153,7 +157,7 @@ public class GemBot
                 _quests.Add(quest);
                 mapToQuests.Add(page);
             }
-            await File.WriteAllTextAsync("../../../Data/DailyQuests/DateQuestsMap.txt", JsonConvert.SerializeObject(mapToQuests));
+            await File.WriteAllTextAsync("Data/DailyQuests/DateQuestsMap.txt", JsonConvert.SerializeObject(mapToQuests));
         }
         await _client.SetGameAsync("/start");
     }
@@ -168,7 +172,7 @@ public class GemBot
 
         try
         {
-            string baseData = await File.ReadAllTextAsync($"../../../Data/Users/{id}");
+            string baseData = await File.ReadAllTextAsync($"Data/Users/{id}");
             User loadedUser = JsonConvert.DeserializeObject<User>(baseData) ??
                               throw new Exception("Somehow your save file is bad.");
             CachedUser cached = new CachedUser(loadedUser, Tools.CurrentTime());
@@ -386,17 +390,17 @@ public class GemBot
     private async Task UserSetupSlash(SocketSlashCommand command)
     {
         var id = command.User.Id;
-        if (Path.Exists($"../../../Data/OldUsers/{id}"))
+        if (Path.Exists($"Data/OldUsers/{id}"))
         {
             User user = await Tools.UserCreator(id);
-            string balanceRaw = await File.ReadAllTextAsync($"../../../Data/OldUsers/{id}/g");
+            string balanceRaw = await File.ReadAllTextAsync($"Data/OldUsers/{id}/g");
             string[] balanceStrings = balanceRaw.Split(" ");
             for (int i = 0; i < balanceStrings.Length; i++)
             {
                 user.Gems[i] = int.Parse(balanceStrings[i]);
             }
 
-            string inventoryRaw = await File.ReadAllTextAsync($"../../../Data/OldUsers/{id}/i");
+            string inventoryRaw = await File.ReadAllTextAsync($"Data/OldUsers/{id}/i");
             string[] inventoryStrings = inventoryRaw.Split(" ");
             user.Inventory = new List<int>();
             for (int i = 0; i < inventoryStrings.Length; i++)
@@ -420,7 +424,7 @@ public class GemBot
                 }
             }
 
-            await File.WriteAllTextAsync($"../../../Data/Users/{id}", JsonConvert.SerializeObject(user));
+            await File.WriteAllTextAsync($"Data/Users/{id}", JsonConvert.SerializeObject(user));
             await command.RespondAsync("Migrated existing account to new gemBOT!");
         }
         else
@@ -1106,7 +1110,7 @@ public class GemBot
                 _quests.Add(quest);
                 mapToQuests.Add(page);
             }
-            await File.WriteAllTextAsync("../../../Data/DailyQuests/DateQuestsMap.txt", JsonConvert.SerializeObject(mapToQuests));
+            await File.WriteAllTextAsync("Data/DailyQuests/DateQuestsMap.txt", JsonConvert.SerializeObject(mapToQuests));
         }
         bool isSmall = await user.User.GetSetting("smallProgress", 0) switch {0 => false, _ => true };
         for (int i = 0; i < _quests.Count; i++)
@@ -2565,7 +2569,7 @@ public class GemBot
         {
             case "add":
                 list.Add(item);
-                await File.WriteAllTextAsync($"../../../Data/ItemLists/{listName}.json",
+                await File.WriteAllTextAsync($"Data/ItemLists/{listName}.json",
                     JsonConvert.SerializeObject(list));
                 string text = "[";
                 foreach (int i in list)
@@ -2579,7 +2583,7 @@ public class GemBot
                 break;
             case "remove":
                 list.Remove(item);
-                await File.WriteAllTextAsync($"../../../Data/ItemLists/{listName}.json",
+                await File.WriteAllTextAsync($"Data/ItemLists/{listName}.json",
                     JsonConvert.SerializeObject(list));
                 string text2 = "[";
                 foreach (int i in list)
@@ -2622,7 +2626,7 @@ public class GemBot
         {
             case "add":
                 list.Add(item);
-                await File.WriteAllTextAsync($"../../../Data/Lists/{listName}.json", JsonConvert.SerializeObject(list));
+                await File.WriteAllTextAsync($"Data/Lists/{listName}.json", JsonConvert.SerializeObject(list));
                 string text = "[";
                 foreach (string i in list)
                 {
@@ -2635,7 +2639,7 @@ public class GemBot
                 break;
             case "remove":
                 list.Remove(item);
-                await File.WriteAllTextAsync($"../../../Data/Lists/{listName}.json", JsonConvert.SerializeObject(list));
+                await File.WriteAllTextAsync($"Data/Lists/{listName}.json", JsonConvert.SerializeObject(list));
                 string text2 = "[";
                 foreach (string i in list)
                 {
@@ -2743,7 +2747,7 @@ public class GemBot
             return;
         }
         DailyQuest quest = _allQuests[rarity][questID];
-        string fileRarity = $"../../../Data/DailyQuests/{rarity}{command[1].ToLower()}";
+        string fileRarity = $"Data/DailyQuests/{rarity}{command[1].ToLower()}";
         switch (command[3].ToLower())
         {
             case "requirement":
@@ -2827,7 +2831,7 @@ public class GemBot
         await Task.Delay(55000);
         await msg2.DeleteAsync();
     }
-    private static string IDString(int id, string directory = "../../../Data/Items")
+    private static string IDString(int id, string directory = "Data/Items")
     {
         return id switch
         {

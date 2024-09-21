@@ -46,11 +46,11 @@ public class Tutorial
     public static async Task<List<Tutorial>> LoadAll(ushort max)
     {
         List<Tutorial> toReturn = [];
-        string[] dat = JsonConvert.DeserializeObject<string[]>(await File.ReadAllTextAsync("../../../Tutorial/map.info")) ?? throw new InvalidOperationException();
+        string[] dat = JsonConvert.DeserializeObject<string[]>(await File.ReadAllTextAsync("Tutorial/map.info")) ?? throw new InvalidOperationException();
         
         for (ushort i = 0; i < max; i++)
         {
-            toReturn.Add(Load(await File.ReadAllTextAsync($"../../../Tutorial/{dat[i]}")));
+            toReturn.Add(Load(await File.ReadAllTextAsync($"Tutorial/{dat[i]}")));
         }
         return toReturn;
     }

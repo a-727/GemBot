@@ -31,7 +31,7 @@ public class Drop
     public int[] Items { get; set; } = [11, 12, 13, 14, 15];
     public int[] Left { get; set; } = [50000, 10000, 2000, 400, 80];
     public int[][] Price { get; set; } = [[6,0], [6,1], [6,2], [6,3], [6,4]];
-    public string[] Descriptions { get; set; } = ["$iDescription", "iDescription", "$iDescription", "$iDescription", "$iDescription"];
+    public string[] Descriptions { get; set; } = ["$iDescription", "$iDescription", "$iDescription", "$iDescription", "$iDescription"];
 }
 
 public class User
@@ -44,6 +44,7 @@ public class User
     public Dictionary<string, uint> DailyQuestsProgress { get; set; } = [];
     public Dictionary<string, ulong> Stats { get; set; } = [];
     public Dictionary<string, ulong> Settings { get; set; } = [];
+    public Dictionary<string, int> UniqueData { get; set; } = [];
     public ulong ID { get; set; }
     public async Task<int> ItemAmount(int id)
     {
@@ -183,6 +184,19 @@ public class User
     {
         Settings[setting] = value;
         await Save();
+    }
+    public async Task<int> GetData(string data, int defaultValue)
+    {
+        try
+        {
+            return UniqueData[data];
+        }
+        catch
+        {
+            UniqueData[data] = defaultValue;
+            await Save();
+            return defaultValue;
+        }
     }
     private async Task Save(ulong id = default)
     {
