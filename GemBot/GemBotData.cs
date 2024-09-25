@@ -167,7 +167,7 @@ public class User
             return Stats[stat];
         }
     }
-    public async Task<ulong> GetSetting(string setting, ulong defaultValue)
+    public async Task<ulong> GetSetting(string setting, ulong defaultValue, bool save = true)
     {
         try
         {
@@ -176,16 +176,16 @@ public class User
         catch
         {
             Settings[setting] = defaultValue;
-            await Save();
+            if (save) await Save();
             return defaultValue;
         }
     }
-    public async Task SetSetting(string setting, ulong value)
+    public async Task SetSetting(string setting, ulong value, bool save = true)
     {
         Settings[setting] = value;
-        await Save();
+        if (save) await Save();
     }
-    public async Task<int> GetData(string data, int defaultValue)
+    public async Task<int> GetData(string data, int defaultValue, bool save = true)
     {
         try
         {
@@ -194,9 +194,14 @@ public class User
         catch
         {
             UniqueData[data] = defaultValue;
-            await Save();
+            if (save) await Save();
             return defaultValue;
         }
+    }
+    public async Task SetData(string data, int value, bool save = true)
+    {
+        UniqueData[data] = value;
+        if (save) await Save();
     }
     private async Task Save(ulong id = default)
     {

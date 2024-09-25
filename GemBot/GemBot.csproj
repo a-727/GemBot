@@ -12,14 +12,8 @@
     </ItemGroup>
 
     <ItemGroup>
-      <Folder Include=".GemBotData\DailyQuests\0common\" />
-      <Folder Include=".GemBotData\DailyQuests\1uncommon\" />
-      <Folder Include=".GemBotData\DailyQuests\2rare\" />
-      <Folder Include=".GemBotData\Drops\" />
-      <Folder Include=".GemBotData\ItemLists\" />
-      <Folder Include=".GemBotData\Lists\" />
-      <Folder Include=".GemBotData\OldUsers\" />
-      <Folder Include=".GemBotData\Users\" />
+      <Folder Include="Data\Mine\Chunks\" />
+      <Folder Include="Data\Users\" />
     </ItemGroup>
 
 </Project>

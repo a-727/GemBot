@@ -28,18 +28,18 @@ public static class Tools
             int percentage = done * 100 / total;
             string toReturn = percentage switch
             {
-                0 => "<:progress1E:1247189493124169779><:progress2E:1247189498044088391><:progress3E:1247189506319450172>",
-                <= 10 => "<:progress1P:1247189496097800313><:progress2E:1247189498044088391><:progress3E:1247189506319450172>",
-                <= 20 => "<:progress1H:1247189495233908778><:progress2E:1247189498044088391><:progress3E:1247189506319450172>",
-                <= 30 => "<:progress1F:1247189494071820341><:progress2E:1247189498044088391><:progress3E:1247189506319450172>",
-                <= 40 => "<:progress1C:1247189491979128902><:progress2P:1247189813841629274><:progress3E:1247189506319450172>",
-                <= 50 => "<:progress1C:1247189491979128902><:progress2H:1247189812591460565><:progress3E:1247189506319450172>",
-                <= 60 => "<:progress1C:1247189491979128902><:progress2M:1247189502674337973><:progress3E:1247189506319450172>",
-                <= 70 => "<:progress1C:1247189491979128902><:progress2F:1247189499255984239><:progress3E:1247189506319450172>",
-                <= 80 => "<:progress1C:1247189491979128902><:progress2C:1247189496798122016><:progress3P:1247189513311354890>",
-                <= 90 => "<:progress1C:1247189491979128902><:progress2C:1247189496798122016><:progress3H:1247189509716709417>",
-                < 100 => "<:progress1C:1247189491979128902><:progress2C:1247189496798122016><:progress3M:1247189815762616320>",
-                _ => "<:progress1C:1247189491979128902><:progress2C:1247189496798122016><:progress3F:1247189814718107648>"
+                0 => "<:progress1E:1287084674648375419><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
+                <= 10 => "<:progress1P:1287084753438244906><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
+                <= 20 => "<:progress1H:1287084728268226690><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
+                <= 30 => "<:progress1F:1287084706667561062><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
+                <= 40 => "<:progress1C:1287084653379063818><:progress2P:1287084937635172372><:progress3E:1287084980190838959>",
+                <= 50 => "<:progress1C:1287084653379063818><:progress2H:1287084885617541263><:progress3E:1287084980190838959>",
+                <= 60 => "<:progress1C:1287084653379063818><:progress2M:1287084910271795341><:progress3E:1287084980190838959>",
+                <= 70 => "<:progress1C:1287084653379063818><:progress2F:1287084849227894915><:progress3E:1287084980190838959>",
+                <= 80 => "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3P:1287085204875513886>",
+                <= 90 => "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3H:1287085077305753671>",
+                < 100 => "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3M:1287085165037748357>",
+                _ => "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3F:1287085036998361181>"
             };
             return toReturn;
         }
@@ -48,14 +48,14 @@ public static class Tools
             int percentage = done * 100 / total;
             string toReturn = percentage switch
             {
-                0 => "<:progress1E:1247189493124169779><:progress3E:1247189506319450172>",
-                <= 17 => "<:progress1P:1247189496097800313><:progress3E:1247189506319450172>",
-                <= 33 => "<:progress1H:1247189495233908778><:progress3E:1247189506319450172>",
-                <= 50 => "<:progress1F:1247189494071820341><:progress3E:1247189506319450172>",
-                <= 66 => "<:progress1C:1247189491979128902><:progress3P:1247189513311354890>",
-                <= 83 => "<:progress1C:1247189491979128902><:progress3H:1247189509716709417>",
-                < 100 => "<:progress1C:1247189491979128902><:progress3M:1247189815762616320>",
-                _ => "<:progress1C:1247189491979128902><:progress3F:1247189814718107648>"
+                0 => "<:progress1E:1287084674648375419><:progress3E:1287084980190838959>",
+                <= 17 => "<:progress1P:1287084753438244906><:progress3E:1287084980190838959>",
+                <= 33 => "<:progress1H:1287084728268226690><:progress3E:1287084980190838959>",
+                <= 50 => "<:progress1F:1287084706667561062><:progress3E:1287084980190838959>",
+                <= 66 => "<:progress1C:1287084653379063818><:progress3P:1287085204875513886>",
+                <= 83 => "<:progress1C:1287084653379063818><:progress3H:1287085077305753671>",
+                < 100 => "<:progress1C:1287084653379063818><:progress3M:1287085165037748357>",
+                _ => "<:progress1C:1287084653379063818><:progress3F:1287085036998361181>"
             };
             return toReturn;
         }
@@ -109,12 +109,13 @@ public static class Tools
     }
     public static async Task<User> UserCreator(ulong id)
     {
-        if (File.Exists($"../../../Data/Users/{id}"))
+        if (File.Exists($"Data/Users/{id}"))
         {
+            Console.WriteLine("User exists!");
             throw new UserExistsException(id.ToString());
         }
         User user = new User { ID = id };
-        await File.WriteAllTextAsync($"../../../Data/Users/{id}",JsonConvert.SerializeObject(user));
+        await File.WriteAllTextAsync($"Data/Users/{id}",JsonConvert.SerializeObject(user));
         return user;
     }
     public static async Task<int> CharmEffect(string[] effects, List<Item> items, User user)
@@ -178,5 +179,17 @@ public static class Tools
             return true; //The bot is in a server where it has "Use External Emojis" permission, so those emojis will show.
         }
         return false; //Since every other case has returned, the bot is in a server where it doesn't have permissions to use emojis. So, let's return that.
+    }
+
+    public static string IDString(int id, string directory = "Data/Items")
+    {
+        return id switch
+        {
+            >= 1000 => throw new InvalidArgumentException(),
+            >= 100 => $"{directory}/{id}.json",
+            >= 10 => $"{directory}/0{id}.json",
+            >= 0 => $"{directory}/00{id}.json",
+            _ => throw new InvalidArgumentException()
+        };
     }
 }

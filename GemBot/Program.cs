@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading.Channels;
 using Discord;
 using Discord.Net;
 using Discord.Rest;
@@ -49,6 +50,7 @@ public class GemBot
     private readonly string[] _currencyNoEmoji = [" **diamonds**", " **emeralds**", " **sapphires**", " **rubies**", " **amber**"];
     private List<DailyQuest> _quests = [];
     private List<List<DailyQuest>> _allQuests = [];
+    private MineData _mineData = null!;
     public async Task Main()
     {
         _client.Log += Log;
@@ -65,6 +67,8 @@ public class GemBot
             throw new NoTokenError();
         }
         await GetItems();
+        _mineData = await MineData.LoadMineData();
+        _ = Task.Run(() => Task.FromResult(RunTicks()));
         await _client.LoginAsync(TokenType.Bot, token);
         await _client.StartAsync();
         await Task.Delay(-1);
@@ -169,7 +173,6 @@ public class GemBot
             cachedUser.InactiveSince = Tools.CurrentTime();
             return cachedUser;
         }
-
         try
         {
             string baseData = await File.ReadAllTextAsync($"Data/Users/{id}");
@@ -258,6 +261,9 @@ public class GemBot
                     break;
                 case "play":
                     await Play(command);
+                    break;
+                case "mine":
+                    await Mine(command);
                     break;
                 default:
                     await command.RespondAsync($"Command {command.Data.Name} not found", ephemeral: true);
@@ -390,48 +396,8 @@ public class GemBot
     private async Task UserSetupSlash(SocketSlashCommand command)
     {
         var id = command.User.Id;
-        if (Path.Exists($"Data/OldUsers/{id}"))
-        {
-            User user = await Tools.UserCreator(id);
-            string balanceRaw = await File.ReadAllTextAsync($"Data/OldUsers/{id}/g");
-            string[] balanceStrings = balanceRaw.Split(" ");
-            for (int i = 0; i < balanceStrings.Length; i++)
-            {
-                user.Gems[i] = int.Parse(balanceStrings[i]);
-            }
-
-            string inventoryRaw = await File.ReadAllTextAsync($"Data/OldUsers/{id}/i");
-            string[] inventoryStrings = inventoryRaw.Split(" ");
-            user.Inventory = new List<int>();
-            for (int i = 0; i < inventoryStrings.Length; i++)
-            {
-                int x = int.Parse(inventoryStrings[i]);
-                if (i < 39)
-                {
-                    user.Inventory.Add(x);
-                }
-                else if (i == 39)
-                {
-                    user.Gems[0] += 30 * x;
-                }
-                else if (i == 40)
-                {
-                    user.Gems[0] += 450 * x;
-                }
-                else if (i == 41)
-                {
-                    user.Gems[2] += 20 * x;
-                }
-            }
-
-            await File.WriteAllTextAsync($"Data/Users/{id}", JsonConvert.SerializeObject(user));
-            await command.RespondAsync("Migrated existing account to new gemBOT!");
-        }
-        else
-        {
-            await Tools.UserCreator(id);
-            await Balance(command, "Welcome to gemBOT! Here's your starting balance:");
-        }
+        await Tools.UserCreator(id);
+        await Balance(command, "Welcome to gemBOT! Here's your starting balance:");
     }
     private async Task Stats(SocketSlashCommand command)
     {
@@ -1778,6 +1744,133 @@ public class GemBot
             .WithColor((uint)await user.GetSetting("uiColor", 3287295));
         await command.RespondAsync(embed: embay.Build());
     }
+    private async Task<Tuple<bool, string, Embed, MessageComponent, string>> MineRaw(ulong userId, bool showEmojis)
+    {
+        User user = await GetUser(userId);
+        if (!showEmojis)
+        {
+            EmbedBuilder embayError = new EmbedBuilder()
+                .WithTitle("Missing Permissions")
+                .WithDescription($"GemBot needs one of the following permissions to run this command.")
+                .AddField("Use External Emojis", "This version of the bot has not been configured with application emojis (if this is false, please notify the owner of the bot to check settings.cs), so it requires \"Use External Emojis\" Permission.")
+                .WithFooter("Please grant gemBOT these permissions or use user apps.");
+            return new Tuple<bool, string, Embed, MessageComponent, string>(false, "Missing Use External Emojis Permission", embayError.Build(), new ComponentBuilder().WithButton("Error", "error", ButtonStyle.Danger, disabled: true).Build(), "no debug info");
+        }
+        int mineMonth = DateTime.Today.Month;
+        if (await user.GetData("MineMonth", mineMonth) != mineMonth)
+        {
+            await user.SetData("MineMonth", mineMonth, false);
+            await user.SetData("mineY", 0, false);
+            await user.SetData("mineX", _rand.Next(_mineData.MineChunks.Count * 20), false);
+            await user.SetData("mining", 0);
+        }
+        string description = await user.GetData("mining", 0) switch
+        {
+            0 => "Click any button to start mining!",
+            1 => "You are currently mining a block.",
+            _ => "Your data doesn't seem to be saved correctly."
+        };
+        int mineY = await user.GetData("mineY", 0);
+        int top = mineY-2;
+        if (top <= 0)
+        {
+            top = 0;
+        }
+        int mineX = await user.GetData("mineX", _rand.Next(_mineData.MineChunks.Count * 20));
+        int left = mineX-2;
+        if (left <= 0)
+        {
+            left = 0;
+        }
+
+        if (left + 4 >= _mineData.MineChunks.Count * 20)
+        {
+            left = _mineData.MineChunks.Count * 20 - 5;
+        }
+        string blocks = "Block ids:";
+        if (top + 5 > 250)
+        {
+            top = 246;
+        }
+        ComponentBuilder buttons = new ComponentBuilder();
+        for (int i = 0; i < 5; i++)
+        {
+            blocks += "\n >";
+            ActionRowBuilder row = new ActionRowBuilder();
+            for (int j = 0; j < 5; j++)
+            {
+                ButtonBuilder button = new ButtonBuilder();
+                int y = top + i;
+                int x = left + j;
+                button.WithCustomId($"mine-{x}|{y}|{await user.GetData("MineMonth", mineMonth)}");
+                blocks += " ";
+                blocks += button.CustomId;
+                MineBlock block = _mineData.GetBlock(x, y);
+                button.WithDisabled(Math.Abs(mineX - x) + Math.Abs(mineY - y) != 1);
+                if (x == mineX && y == mineY)
+                {
+                    button.WithStyle(ButtonStyle.Secondary)
+                        .WithEmote(Emote.Parse("<:you:1287157766871580833>"));
+                    row.AddComponent(button.Build());
+                    continue;
+                }
+                switch (block.Type)
+                {
+                    case BlockType.Air:
+                        button.WithStyle(ButtonStyle.Secondary)
+                            .WithEmote(Emote.Parse("<:air:1287157701905743903>"));
+                        break;
+                    case BlockType.Stone:
+                        button.WithStyle(ButtonStyle.Primary)
+                            .WithEmote(Emote.Parse("<:stone:1287086951215796346>"));
+                        break;
+                    case BlockType.Diamonds:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_currency[0]));
+                        break;
+                    case BlockType.Emeralds:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_currency[1]));
+                        break;
+                    case BlockType.Sapphires:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_currency[2]));
+                        break;
+                    case BlockType.Rubies:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_currency[3]));
+                        break;
+                    case BlockType.Amber:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_currency[4]));
+                        break;
+                    default:
+                        button.WithStyle(ButtonStyle.Danger)
+                            .WithEmote(Emote.Parse("<:stone:1287086951215796346>"))
+                            .WithLabel("Glitched Block");
+                        break;
+                }
+                row.AddComponent(button.Build());
+            }
+            buttons.AddRow(row);
+        }
+        Embed embay = new EmbedBuilder()
+            .WithTitle("Mine!")
+            .WithDescription(description)
+            .WithFooter("Click any button to mine that location!")
+            .Build();
+        return new Tuple<bool, string, Embed, MessageComponent, string>(true, "Mine", embay, buttons.Build(), blocks);
+    }
+    private async Task Mine(SocketSlashCommand command)
+    {
+        Tuple<bool, string, Embed, MessageComponent, string> result = await MineRaw(command.User.Id, Tools.ShowEmojis(command, Settings.BotID(), _client));
+        if (!result.Item1)
+        {
+            await command.RespondAsync(result.Item2, embed: result.Item3);
+            return;
+        }
+        await command.RespondAsync(result.Item2, embed: result.Item3, components: result.Item4);
+    }
     
     
     private async Task InventoryButton(SocketMessageComponent component, string settings)
@@ -1894,6 +1987,92 @@ public class GemBot
             });
         }
     }
+    private async Task MineButton(SocketMessageComponent component, string settings)
+    {
+        string[] temp = settings.Split("|");
+        if (temp.Length < 3) throw new ButtonValueError();
+        User user = await GetUser(component.User.Id);
+        if (component.Message.Interaction.User.Id != user.ID)
+        {
+            await component.RespondAsync("This is not your mine page! Use /mine to see your options!", ephemeral: true);
+            return;
+        }
+
+        if (temp[2] != _mineData.MonthName)
+        {
+            await component.RespondAsync("This button is old; from last month. Updating data...");
+            Tuple<bool, string, Embed, MessageComponent, string> result = await MineRaw(user.ID, true);
+            await component.Message.ModifyAsync((properties) =>
+            {
+                properties.Content = result.Item2;
+                properties.Embed = result.Item3;
+                properties.Components = result.Item4;
+            });
+            return;
+
+        }
+        int x = 0;
+        int y = 0;
+        try
+        {
+            x = int.Parse(temp[0]);
+            y = int.Parse(temp[1]);
+        }
+        catch (FormatException)
+        {
+            throw new ButtonValueError();
+        }
+        MineBlock block = _mineData.GetBlock(x, y);
+        if (await user.GetData("mining", 0) == 1)
+        {
+            string progressBar = Tools.ProgressBar((int)block.Durability - (block.Left ?? block.GetLeft()), (int)block.Durability);
+            await component.RespondAsync($"You are already mining; you cannot start mining another block.\n > **Progress**: {progressBar}", ephemeral: true);
+            return;
+        }
+        if (block.Type == BlockType.Air)
+        {
+            await user.SetData("mineX", x, false);
+            await user.SetData("mineY", y);
+            Tuple<bool, string, Embed, MessageComponent, string> result = await MineRaw(user.ID, true);
+            await component.UpdateAsync((properties) => { 
+                properties.Embed = result.Item3;
+                properties.Content = result.Item2;
+                properties.Components = result.Item4;
+            });
+        }
+        else
+        {
+            try
+            {
+                block.Mine(component.User.Id, 0); //Mining with power will be determined during MineTick();
+                await _mineData.GetChunk(x / 20).Save(x / 20);
+                await user.SetData("mining", 1);
+                await component.RespondAsync("Successfully started mining this block!", ephemeral: true);
+                if (await Tools.CharmEffect(["betterAutoRefresh", "mineAutoRefresh"], _items, user) == 0) {return;}
+                await Task.Delay(1000*((int)(block.Durability / (await Tools.CharmEffect(["minePower"], _items, user) + 5))));
+                Tuple<bool, string, Embed, MessageComponent, string> result = await MineRaw(user.ID, true);
+                await component.Message.ModifyAsync((properties) =>
+                {
+                    properties.Content = result.Item2;
+                    properties.Embed = result.Item3;
+                    properties.Components = result.Item4;
+                });
+            }
+            catch (SomeoneElseIsMiningError)
+            {
+                await component.RespondAsync("Someone else is mining this block. Try another block.", ephemeral: true);
+            }
+            catch (BlockIsAirError)
+            {
+                await component.RespondAsync("This block is air in some cases but not others. Check save data/code.", ephemeral: true);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                await component.RespondAsync("```\ne\n```", ephemeral:true);
+            }
+        }
+    }
     private Task ButtonHandlerSetup(SocketMessageComponent component)
     {
         _ = Task.Run(() => Task.FromResult(ButtonHandler(component)));
@@ -1912,6 +2091,9 @@ public class GemBot
                 case "bankExchange" or "bank":
                     await BankButton(component, realID[1]);
                     break;
+                case "mine":
+                    await MineButton(component, realID[1]);
+                    break;
                 default:
                     await component.RespondAsync(
                         $"**Button type not found.**\n > `Button of id {realID[0]} and options {realID[1]} was not able to be executed because id {realID[0]} was not found.`",
@@ -1921,7 +2103,7 @@ public class GemBot
         }
         catch (ButtonValueError)
         {
-            await component.RespondAsync($"An internal error due to button definition prevented this button to be handled. \n > `Button of id {realID[0]} was found, but arguments {realID[1]} were not written correctly`");
+            await component.RespondAsync($"An internal error due to button definition prevented this button to be handled. \n > `Button of id {realID[0]} was found, but arguments {realID[1]} were not written correctly`\n**This usually happens when the button you clicked was old. Please run the command that gave you the button again and try again**");
         }
         catch (Exception e)
         {
@@ -2005,6 +2187,12 @@ public class GemBot
                 case "money":
                     await CreateMoney(socketMessage);
                     break;
+                case "give":
+                    await CreateItems(socketMessage);
+                    break;
+                case "help":
+                    await TextHelp(socketMessage);
+                    break;
                 default:
                     await socketMessage.Channel.SendMessageAsync("This command was not found");
                     break;
@@ -2024,6 +2212,7 @@ public class GemBot
     }
     private async Task ResetCommands(SocketMessage message)
     {
+        await message.Channel.SendMessageAsync("Deleting old commands (1/6)...");
         await _client.SetGameAsync("resting commands...");
         string[] names = ["item", "balance", "beg", "stats", "inventory", "work", "magik", "hep", "start", "bank", "theme", "setting", "quests", "give", "mine", "play", "help"];
         IReadOnlyCollection<RestGlobalCommand>? commands = await  _client.Rest.GetGlobalApplicationCommands();
@@ -2033,6 +2222,7 @@ public class GemBot
             Console.WriteLine($"Command {command.Name} deleted!");
             await command.DeleteAsync();
         }
+        await message.Channel.SendMessageAsync("Building new commands (2/6)...");
         SlashCommandBuilder itemInfo = new SlashCommandBuilder()
             .WithName("item")
             .WithDescription("Get information about an item.")
@@ -2188,10 +2378,12 @@ public class GemBot
             );
         SlashCommandBuilder mine = new SlashCommandBuilder()
             .WithName("mine")
-            .WithDescription("Use your pickaxes to mine");
+            .WithDescription("Use your pickaxes to mine")
+            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall]);
         SlashCommandBuilder play = new SlashCommandBuilder()
             .WithName("play")
-            .WithDescription("Use a controller to play video games");
+            .WithDescription("Use a controller to play video games")
+            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall]);
         SlashCommandBuilder settings = new SlashCommandBuilder()
             .WithName("setting")
             .WithDescription("Set a setting")
@@ -2353,21 +2545,25 @@ public class GemBot
             ;
         try
         {
+            await message.Channel.SendMessageAsync("Pushing grinding commands (3/6)...");
             await _client.CreateGlobalApplicationCommandAsync(beg.Build());
-            await _client.CreateGlobalApplicationCommandAsync(balance.Build());
-            await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
-            await _client.CreateGlobalApplicationCommandAsync(stats.Build());
-            await _client.CreateGlobalApplicationCommandAsync(inventory.Build());
             await _client.CreateGlobalApplicationCommandAsync(work.Build());
             await _client.CreateGlobalApplicationCommandAsync(magik.Build());
-            await _client.CreateGlobalApplicationCommandAsync(help.Build());
-            await _client.CreateGlobalApplicationCommandAsync(start.Build());
-            await _client.CreateGlobalApplicationCommandAsync(bank.Build());
-            await _client.CreateGlobalApplicationCommandAsync(theme.Build());
-            await _client.CreateGlobalApplicationCommandAsync(quests.Build());
-            await _client.CreateGlobalApplicationCommandAsync(give.Build());
             await _client.CreateGlobalApplicationCommandAsync(mine.Build());
             await _client.CreateGlobalApplicationCommandAsync(play.Build());
+            await message.Channel.SendMessageAsync("Pushing economy commands (4/6)....");
+            await _client.CreateGlobalApplicationCommandAsync(balance.Build());
+            await _client.CreateGlobalApplicationCommandAsync(inventory.Build());
+            await _client.CreateGlobalApplicationCommandAsync(quests.Build());
+            await _client.CreateGlobalApplicationCommandAsync(give.Build());
+            await _client.CreateGlobalApplicationCommandAsync(bank.Build());
+            await message.Channel.SendMessageAsync("Pushing info commands (5/6)...");
+            await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
+            await _client.CreateGlobalApplicationCommandAsync(stats.Build());
+            await _client.CreateGlobalApplicationCommandAsync(help.Build());
+            await _client.CreateGlobalApplicationCommandAsync(start.Build());
+            await message.Channel.SendMessageAsync("Pushing customation commands(6/6)...");
+            await _client.CreateGlobalApplicationCommandAsync(theme.Build());
             await _client.CreateGlobalApplicationCommandAsync(settings.Build());
         }
         catch (HttpException exception)
@@ -2405,35 +2601,35 @@ public class GemBot
             {
                 case "id":
                     item.ID = int.Parse(command[3]);
-                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(Tools.IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item, Formatting.Indented));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     //await GetItems();
                     break;
                 case "value":
                     item.Value = int.Parse(command[3]);
-                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(Tools.IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item, Formatting.Indented));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     //await GetItems();
                     break;
                 case "name":
                     item.Name = String.Join(" ", command[3..^0]);
-                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(Tools.IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item, Formatting.Indented));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     //await GetItems();
                     break;
                 case "emoji":
                     item.Emoji = command[3];
-                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(Tools.IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item, Formatting.Indented));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     //await GetItems();
                     break;
                 case "description":
                     item.Description = String.Join(" ", command[3..^0]);
-                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(Tools.IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item, Formatting.Indented));
                     await message.Channel.SendMessageAsync($"## Item saved! \n {item}");
                     //await GetItems();
@@ -2486,14 +2682,14 @@ public class GemBot
             {
                 case "name":
                     charm.Effect = command[4];
-                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(Tools.IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item, Formatting.Indented));
                     await message.Channel.SendMessageAsync($"## Charm saved! \n {charm}");
                     //await GetItems();
                     break;
                 case "effect":
                     charm.Amount = int.Parse(command[4]);
-                    await File.WriteAllTextAsync(IDString(int.Parse(command[1])),
+                    await File.WriteAllTextAsync(Tools.IDString(int.Parse(command[1])),
                         JsonConvert.SerializeObject(item, Formatting.Indented));
                     await message.Channel.SendMessageAsync($"## Charm saved! \n {charm}");
                     //await GetItems();
@@ -2512,7 +2708,7 @@ public class GemBot
     {
         _items.Add(new Item(_items.Count));
         await message.Channel.SendMessageAsync(_items[^1].ToString());
-        await File.WriteAllTextAsync(IDString(_items.Count - 1), JsonConvert.SerializeObject(_items[^1], Formatting.Indented));
+        await File.WriteAllTextAsync(Tools.IDString(_items.Count - 1), JsonConvert.SerializeObject(_items[^1], Formatting.Indented));
     }
     private async Task AddCharm(SocketMessage message)
     {
@@ -2753,25 +2949,25 @@ public class GemBot
             case "requirement":
                 quest.Requirement = command[4];
                 quest.Date = Tools.CurrentDay();
-                await File.WriteAllTextAsync(IDString(questID, fileRarity), JsonConvert.SerializeObject(quest, Formatting.Indented));
+                await File.WriteAllTextAsync(Tools.IDString(questID, fileRarity), JsonConvert.SerializeObject(quest, Formatting.Indented));
                 await message.Channel.SendMessageAsync($"## Quest saved! \n {quest}");
                 break;
             case "description":
                 quest.Description = string.Join(" ", command[4..]);
                 quest.Date = Tools.CurrentDay();
-                await File.WriteAllTextAsync(IDString(questID, fileRarity), JsonConvert.SerializeObject(quest, Formatting.Indented));
+                await File.WriteAllTextAsync(Tools.IDString(questID, fileRarity), JsonConvert.SerializeObject(quest, Formatting.Indented));
                 await message.Channel.SendMessageAsync($"## Quest saved! \n {quest}");
                 break;
             case "amount":
                 quest.Amount = uint.Parse(command[4]);
                 quest.Date = Tools.CurrentDay();
-                await File.WriteAllTextAsync(IDString(questID, fileRarity), JsonConvert.SerializeObject(quest, Formatting.Indented));
+                await File.WriteAllTextAsync(Tools.IDString(questID, fileRarity), JsonConvert.SerializeObject(quest, Formatting.Indented));
                 await message.Channel.SendMessageAsync($"## Quest saved! \n {quest}");
                 break;
             case "name":
                 quest.Name = string.Join(" ", command[4..]);
                 quest.Date = Tools.CurrentDay();
-                await File.WriteAllTextAsync(IDString(questID, fileRarity), JsonConvert.SerializeObject(quest, Formatting.Indented));
+                await File.WriteAllTextAsync(Tools.IDString(questID, fileRarity), JsonConvert.SerializeObject(quest, Formatting.Indented));
                 await message.Channel.SendMessageAsync($"## Quest saved! \n {quest}");
                 break;
             default:
@@ -2783,7 +2979,7 @@ public class GemBot
     }
     private async Task CreateMoney(SocketMessage message)
     {
-        string[] args = message.Content.Split();
+        string[] args = message.Content.Split(" ");
         if (args.Length < 4)
         {
             RestUserMessage msg3 = await message.Channel.SendMessageAsync("Please enter enough arguments");
@@ -2828,18 +3024,182 @@ public class GemBot
                 .WithTitle("New balance!")
                 .WithDescription(await BalanceRaw(true, iUser.Id, ""))
                 .Build());
-        await Task.Delay(55000);
+        await Task.Delay(5000);
         await msg2.DeleteAsync();
     }
-    private static string IDString(int id, string directory = "Data/Items")
+    private async Task CreateItems(SocketMessage message)
     {
-        return id switch
+        string[] args = message.Content.Split(" ");
+        if (args.Length < 4)
         {
-            >= 1000 => throw new InvalidArgumentException(),
-            >= 100 => $"{directory}/{id}.json",
-            >= 10 => $"{directory}/0{id}.json",
-            >= 0 => $"{directory}/00{id}.json",
-            _ => throw new InvalidArgumentException()
-        };
+            RestUserMessage msg3 = await message.Channel.SendMessageAsync("Please enter enough arguments");
+            await Task.Delay(5000);
+            await msg3.DeleteAsync();
+            return;
+        }
+        IUser? iUser = null;
+        string[] temp = args[1].Split("<@");
+        if (temp.Length >= 2)
+        {
+            temp = temp[1].Split(">");
+            try
+            {
+                iUser = await _client.GetUserAsync(ulong.Parse(temp[0]));
+            }
+            catch (FormatException)
+            {
+                
+            }
+        }
+        try
+        {
+            iUser = await _client.GetUserAsync(ulong.Parse(args[1]));
+        }
+        catch (FormatException)
+        {
+                
+        }
+        if (iUser == null)
+        {
+            RestUserMessage msg = await message.Channel.SendMessageAsync("Please enter a valid user: @mention or id.");
+            await Task.Delay(5000);
+            await msg.DeleteAsync();
+            return;
+        }
+        User user = await GetUser(iUser.Id);
+        await user.GainItem(int.Parse(args[2]), int.Parse(args[3]));
+        RestUserMessage msg2 = await message.Channel.SendMessageAsync(
+            $"You have successfully added {args[3]} {_items[int.Parse(args[2])].Emoji}");
+        await Task.Delay(5000);
+        await msg2.DeleteAsync();
+    }
+    private async Task TextHelp(SocketMessage message)
+    {
+        Embed embay0 = new EmbedBuilder()
+            .WithTitle("Uncategorized commands")
+            .WithDescription("These commands do not have a category")
+            .AddField("$reset", " > **Params**: *none*\n > **Descriptions**: Reset the commands")
+            .AddField("$dList", " > **Params**: <listName> <add/remove> <string> [<string>]\n > **Description**: Add/remove <string> to data list <listName>")
+            .Build();
+        Embed embay1 = new EmbedBuilder()
+            .WithTitle("Item")
+            .WithDescription("Commands that modify, show, add, or reload items.")
+            .AddField("$reload", " > **Params**: *none*\n > **Descriptions**: Reload users, items, and lists. Useful if you modify data directly")
+            .AddField("$item", " > **Params**: <itemID> <property> <value>\n > **Description**: Set Item <itemID>'s <property> to <value>")
+            .AddField("$add_item", " > **Params**: *none*\n > **Description**: Add another item to the list. WARNING: this action is non-reversible.")
+            .AddField("$charm", " > **Params**: <itemID> <charmID> <property> <value>\n > **Description**: Set Item <itemID>'s Charm <charmID>'s <property> to <value>.")
+            .AddField("$add_charm", " > **Params**: <itemID>\n > **Description**: Add another charm to Item <itemID>")
+            .AddField("$iList", " > **Params**: <listName> <add/remove> <itemID>\n > **Description**: Add/remove <itemID> to item list <listName>. (creates List <listName> if it doesn't exist)")
+            .Build();
+        Embed embay2 = new EmbedBuilder()
+            .WithTitle("Utility")
+            .WithDescription("Commands that don't do anything, just show useful stuff.")
+            .AddField("$help", " > **Params**: *none*\n > **Description**: List all admin commands, their parameters, and arguments.")
+            .AddField("$all_items", " > **Params**: *none*\n > **Descriptions**: List all the items.")
+            .AddField("$color", " > **Params**: <r> <g> <b>\n > **Description**: Turns a color in rgb format into discord format.")
+            .Build();
+        Embed embay3 = new EmbedBuilder()
+            .WithTitle("User")
+            .WithDescription("Commands that modify data of users (or servers)")
+            .AddField("$money", " > **Params**: <user> <value> <amount>\n > **Description** Add <amount> of <value> (integer) currency to user <user>")
+            .AddField("$give", " > **Params**: <user> <item> <amount>\n > **Description**: Add <amount> of Item <item> to User <user>")
+            .Build();
+        Embed embay4 = new EmbedBuilder()
+            .WithTitle("Quests")
+            .WithDescription("Commands that modify, add, or delete quests.")
+            .AddField("$add_quest", " > **Params**: <rarity>\n> **Description**: Create a new quest of rarity rarity")
+            .AddField("$quest", " > **Params**: <rarity> <questID> <property> <value>\n **Description**: Set Quest <rarity> <questId>'s <property> to <value>")
+            .Build();
+        await message.Channel.SendMessageAsync("View Embeds for details!", embeds:[embay1, embay2, embay3, embay4, embay0]);
+    }
+
+
+    private async Task RunTicks()
+    {
+        Console.WriteLine("Starting ticking...");
+        Stopwatch stopwatch = new Stopwatch();
+        stopwatch.Start();
+        uint taskTimes = 0;
+        while (true)
+        {
+            //every tick
+            Console.WriteLine($"Tick {taskTimes}...");
+            _ = Task.Run(() => Task.FromResult(MineTick()));
+            if (taskTimes % 60 == 0) //every minute
+            {
+                _ = Task.Run(() => Task.FromResult(_mineData.SaveMineData()));
+            }
+            if (taskTimes % 60 * 60 * 24 == 0) //every day
+            {
+                if (DateTime.Today.Month.ToString() != _mineData.MonthName)
+                {
+                    await Task.Delay(100);
+                    _mineData = await MineData.LoadMineData();
+                }
+            }
+            taskTimes++;
+            await Task.Delay(1000 - (int)stopwatch.ElapsedMilliseconds);
+            stopwatch.Restart();
+        }
+    }
+    private async Task MineTick()
+    {
+        foreach (MineChunk chunk in _mineData.MineChunks)
+        {
+            foreach (List<MineBlock> layer in chunk.Blocks)
+            {
+                foreach (MineBlock block in layer)
+                {
+                    if (block.Type == BlockType.Air || block.MinerID is null) continue;
+                    try
+                    {
+                        User user = await GetUser((ulong)block.MinerID);
+                        Tuple<bool, int, BlockType> result = block.Mine((ulong)block.MinerID, await Tools.CharmEffect(["minePower"], _items, user)+5);
+                        if (result.Item1)
+                        {
+                            await user.SetData("mining", 0, false);
+                            await user.Increase("mined", 1);
+                            _mineData.TimesMined++;
+                            BlockType type = result.Item3;
+                            bool dropsItem = type switch
+                            {
+                                BlockType.Air => true,
+                                BlockType.Stone => true,
+                                BlockType.Diamonds => false,
+                                BlockType.Emeralds => false,
+                                BlockType.Rubies => false,
+                                BlockType.Sapphires => false,
+                                BlockType.Amber => false,
+                                _ => true
+                            };
+                            if (dropsItem)
+                            {
+                                int itemId = type switch
+                                {
+                                    BlockType.Air => 39,
+                                    BlockType.Stone => 39,
+                                    _ => 39
+                                };
+                                await user.GainItem(itemId, result.Item2);
+                            }
+                            else
+                            {
+                                int value = type switch
+                                {
+                                    BlockType.Diamonds => 0,
+                                    BlockType.Emeralds => 1,
+                                    BlockType.Sapphires => 2,
+                                    BlockType.Rubies => 3,
+                                    BlockType.Amber => 4,
+                                    _ => 0
+                                };
+                                await user.Add(result.Item2, value);
+                            }
+                        }
+                    }
+                    catch(Exception e){Console.WriteLine(e);}
+                }
+            }
+        }
     }
 }
