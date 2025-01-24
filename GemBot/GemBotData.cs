@@ -45,6 +45,8 @@ public class User
     public Dictionary<string, ulong> Stats { get; set; } = [];
     public Dictionary<string, ulong> Settings { get; set; } = [];
     public Dictionary<string, int> UniqueData { get; set; } = [];
+    public Dictionary<string, List<int>> DataLists { get; set; } = [];
+    public List<CraftingRecipe.Furnace> Furnaces { get; set; } = [new()];
     public ulong ID { get; set; }
     public async Task<int> ItemAmount(int id)
     {
@@ -203,7 +205,44 @@ public class User
         UniqueData[data] = value;
         if (save) await Save();
     }
-    private async Task Save(ulong id = default)
+    public async Task<List<int>> GetListData(string data, List<int> defaultValue, bool save = true)
+    {
+        try
+        {
+            return DataLists[data];
+        }
+        catch
+        {
+            DataLists[data] = defaultValue;
+            if (save) await Save();
+            return defaultValue;
+        }
+    }
+    public async Task<List<int>> GetListData(string data, bool save = true)
+    {
+        return await GetListData(data, [], save);
+    }
+    public async Task SetListData(string data, List<int> value, bool save = true)
+    {
+        DataLists[data] = value;
+        if (save) await Save();
+    }
+    public async Task CheckFurnaces(int furnaceCount)
+    {
+        int extraFurnaces = Furnaces.Count - furnaceCount;
+        while (extraFurnaces < 0)
+        {
+            Furnaces.Add(new CraftingRecipe.Furnace());
+            extraFurnaces++;
+        }
+        if (extraFurnaces == 0) return;
+        while (extraFurnaces > 0)
+        {
+            if (Furnaces.Remove(Furnaces.First(furnace => furnace.Crafting == false))) extraFurnaces--;
+            else break;
+        }
+    }
+    public async Task Save(ulong id = default)
     {
         if (id == default)
         {
@@ -258,9 +297,125 @@ public class CachedUser (User user, ulong time)
     public RestInteractionMessage? LastQuestsMessage = null;
     public int TutorialPage = 0;
     public bool[]? TutorialProgress = null;
+    public List<Tuple<int, int>>? NextCrafting = null;
     public ulong InactiveSince = time;
+    public byte LastWork = 0;
     public static implicit operator User (CachedUser x)
     {
         return x.User;
+    }
+}
+
+public class CraftingRecipe
+{
+    public int ID = 999;
+    public int ItemCrafted = 21; //token
+    public int AmountCrafted = 1;
+    public List<RecipeRequirements> Requirements = [];
+    public uint TimeRequired = 3600; //in seconds
+
+    public async Task Save(int id = -1)
+    {
+        if (id == -1)
+        {
+            id = ID;
+        }
+        await File.WriteAllTextAsync($"Data/CraftingRecipes/{id}", JsonConvert.SerializeObject(this, Formatting.None));
+    }
+    public override string ToString()
+    {
+        string toReturn = $"**Crafting Recipe {ID}**"
+                + $"\n > Crafts {AmountCrafted} copies of Item **{ItemCrafted}**"
+                + $"\n > Takes {TimeRequired} seconds"
+                + $"\n > Requirements:";
+        foreach (RecipeRequirements req in Requirements)
+        {
+            toReturn += $"\n> -- {req.Amount} of {req.Item}";
+        }
+        return toReturn;
+    }
+    public string ToString(List<Item> items)
+    {
+        Item itemCrafted = items[ItemCrafted];
+        string toReturn = $"**Crafting Recipe {ID}**"
+                + $"\n > Crafts {AmountCrafted} copies of **{itemCrafted.Name}** (Item {ItemCrafted})"
+                + $"\n > Takes {TimeRequired} seconds"
+                + $"\n > Requirements:";
+        foreach (RecipeRequirements req in Requirements)
+        {
+            Item itemRequired = items[req.Item];
+            toReturn += $"\n> -- {req.Amount} of {itemRequired.Name} (Item {req.Item})";
+        }
+        return toReturn;
+    }
+    public int AmountCraftable(User user)
+    {
+        int toReturn = int.MaxValue;
+        foreach (RecipeRequirements req in Requirements)
+        {
+            int thisMax = user.Inventory[req.Item] / req.Amount;
+            if (thisMax < toReturn)
+            {
+                toReturn = thisMax;
+            }
+        }
+
+        return toReturn;
+    }
+
+    public int CompareRecipeProfit(CraftingRecipe with, List<Item> items)
+    {
+        int thisProfit = 0;
+        int thatProfit = 0;
+        foreach (RecipeRequirements requirement in Requirements)
+        {
+            thisProfit -= requirement.Amount * items[requirement.Item].Value;
+        }
+        foreach (RecipeRequirements requirement in with.Requirements)
+        {
+            thatProfit -= requirement.Amount * items[requirement.Item].Value;
+        }
+        thisProfit += AmountCrafted * items[ItemCrafted].Value;
+        thatProfit += with.AmountCrafted * items[with.ItemCrafted].Value;
+        return thisProfit - thatProfit;
+    }
+    public class RecipeRequirements
+    {
+        public int Item { get; set; } = 39; //stone coin.
+        public int Amount { get; set; } = 1;
+    }
+
+    public class Furnace
+    {
+        public int NextItem = 21; //token
+        public int Amount = 0;
+        public bool Crafting = false;
+        public uint TimeRequired = 360;
+        public uint TimeLeft = 0;
+        public static Furnace FromCraftingRecipe(CraftingRecipe recipe)
+        {
+            return new Furnace
+            {
+                Amount = recipe.AmountCrafted,
+                Crafting = true,
+                NextItem = recipe.ItemCrafted,
+                TimeLeft = recipe.TimeRequired,
+                TimeRequired = recipe.TimeRequired
+            };
+        }
+
+        public void UpdateFromCraftingRecipe(CraftingRecipe recipe)
+        {
+            Amount = recipe.AmountCrafted;
+            Crafting = true;
+            NextItem = recipe.ItemCrafted;
+            TimeLeft = recipe.TimeRequired;
+            TimeRequired = recipe.TimeRequired;
+        }
+        public bool Tick()
+        {
+            TimeLeft--;
+            return TimeLeft <= 0;
+        }
     }
 }

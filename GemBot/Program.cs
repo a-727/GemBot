@@ -39,11 +39,12 @@ public static class Program
 
 public class GemBot
 {
+    private const int FurnaceConst = 1; //Number of default furnaces without charms.
     private Dictionary<string, List<int>> _itemLists = new();
     private readonly Random _rand = new();
     private readonly DiscordSocketClient _client = new();
     private Dictionary<string, List<string>> _dataLists = new();
-    private List<Item> _items = new();
+    private List<Item> _items = [];
     private List<Tutorial> _tutorials = [];
     private Dictionary<ulong, CachedUser> _users = [];
     private readonly string[] _currency = ["<:diamond:1287084308485640288>", "<:emerald:1287084632428515338>", "<:sapphire:1287086790137876530>", "<:ruby:1287086175974199347>", "<:amber:1287084015135756289>"];
@@ -51,6 +52,7 @@ public class GemBot
     private List<DailyQuest> _quests = [];
     private List<List<DailyQuest>> _allQuests = [];
     private MineData _mineData = null!;
+    private List<CraftingRecipe> _craftingRecipes = [];
     public async Task Main()
     {
         _client.Log += Log;
@@ -67,13 +69,23 @@ public class GemBot
             throw new NoTokenError();
         }
         await GetItems();
+        foreach (string path in Directory.GetFiles("Data/CraftingRecipes"))
+        {
+            string recipeData = await File.ReadAllTextAsync(path);
+            CraftingRecipe? recipe = JsonConvert.DeserializeObject<CraftingRecipe>(recipeData);
+            if (recipe is not null)
+            {
+                _craftingRecipes.Add(recipe);
+            }
+        }
+        _craftingRecipes = _craftingRecipes.OrderBy(o => o.ID).ToList();
         _mineData = await MineData.LoadMineData();
         _ = Task.Run(() => Task.FromResult(RunTicks()));
         await _client.LoginAsync(TokenType.Bot, token);
         await _client.StartAsync();
         await Task.Delay(-1);
     }
-
+    
     private async Task GetItems()
     {
         await _client.SetGameAsync("Updating items...");
@@ -169,7 +181,7 @@ public class GemBot
     {
         if (_users.TryGetValue(id, out CachedUser? cachedUser))
         {
-            Debug.Assert(cachedUser != null, nameof(cachedUser) + " != null");
+            Debug.Assert(cachedUser != null, "cachedUser is null");
             cachedUser.InactiveSince = Tools.CurrentTime();
             return cachedUser;
         }
@@ -192,6 +204,8 @@ public class GemBot
         Console.WriteLine(msg.ToString());
         return Task.CompletedTask;
     }
+    
+    
     private Task CommandHandlerStartup(SocketSlashCommand command)
     {
         _ = Task.Run(() => Task.FromResult(CommandHandler(command)));
@@ -264,6 +278,9 @@ public class GemBot
                     break;
                 case "mine":
                     await Mine(command);
+                    break;
+                case "craft":
+                    await Craft(command);
                     break;
                 default:
                     await command.RespondAsync($"Command {command.Data.Name} not found", ephemeral: true);
@@ -446,15 +463,32 @@ public class GemBot
         int mn = 5 + await Tools.CharmEffect(["BegMin", "Beg", "GrindMin", "Grind", "Positive"], _items, user);
         int mx = 9 + await Tools.CharmEffect(["BegMax", "Beg", "GrindMax", "Grind", "Positive"], _items, user);
         int amnt = _rand.Next(mn, mx);
+        int chanceRoll = _rand.Next(0, 500) + 1; //random number from 1 to 500
+        await user.Increase("commands", 1, false);
+        await user.Increase("beg", 1);
+        int sucsessChance = 500 - (int) user.GetProgress("BegSuccess") + await Tools.CharmEffect(["BegChance", "Beg"], _items, user);
+        if (sucsessChance < 50) sucsessChance = 50;
+        if (chanceRoll > sucsessChance)
+        {
+            await user.Increase("begFail", 1);
+            EmbedBuilder embayFail = new EmbedBuilder()
+                .WithTitle("Beg failure!")
+                .WithDescription($"You failed and didn't get any gems. \n -# You had a {sucsessChance/5}.{(sucsessChance%5) * 2}% chance to succeed.")
+                .WithColor(new Color((uint)(await user.GetSetting("begRandom", 0) switch
+                {
+                    0 => await user.GetSetting("begColor", 65525), 1 => (ulong)_rand.Next(16777216), _ => (ulong)3342180
+                })));
+            await command.RespondAsync(embed: embayFail.Build(), ephemeral:await user.GetSetting("hideBeg", 0) == 1);
+            return;
+        }
         await user.Add(amnt, 0, false);
         string text = $"You gained {amnt} **Diamonds**.";
         if (Tools.ShowEmojis(command, Settings.BotID(), _client))
         {
             text = $"You gained {amnt}{_currency[0]}!";
         }
-        await user.Increase("commands", 1, false);
         await user.Increase("earned", amnt, false);
-        await user.Increase("beg", 1);
+        await user.Increase("begSuccess", 1);
         List<string> begChoices = _dataLists["BegEffects"];
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle(text)
@@ -467,7 +501,8 @@ public class GemBot
     }
     private async Task Work(SocketSlashCommand command)
     {
-        User user = await GetUser(command.User.Id);
+        CachedUser cached = await GetUser(command.User.Id);
+        User user = cached.User;
         ulong t = Tools.CurrentTime();
         int effect = await Tools.CharmEffect(["fasterCooldown", "positive"], _items, user);
         uint timeoutFor = effect switch
@@ -484,6 +519,7 @@ public class GemBot
         {
             throw new Cooldown(user.CoolDowns["work"]);
         }
+        int workNum = _rand.Next(255) + 1;
         int mn = 10 + await Tools.CharmEffect(["WorkMin", "Work", "GrindMin", "Grind", "Positive"], _items, user);
         int mx = 16 + await Tools.CharmEffect(["WorkMax", "Work", "GrindMax", "Grind", "Positive"], _items, user);
         int amnt = _rand.Next(mn, mx);
@@ -1871,6 +1907,77 @@ public class GemBot
         }
         await command.RespondAsync(result.Item2, embed: result.Item3, components: result.Item4);
     }
+    private async Task<Tuple<string, Embed, MessageComponent>> FurnacesRaw(ulong userId, bool emoj)
+    {
+        User user = await GetUser(userId);
+        int craftSlots = await Tools.CharmEffect(["extra_craft_slots"], _items, user) + FurnaceConst;
+        await user.CheckFurnaces(craftSlots);
+        EmbedBuilder embay = new EmbedBuilder()
+            .WithTitle("Craft!")
+            .WithDescription("View your current crafting slots, and click on the buttons to craft new things!");
+        foreach (CraftingRecipe.Furnace furnace in user.Furnaces)
+        {
+            if (!furnace.Crafting)
+            {
+                embay.AddField("Available Slot", " > Press a button below to begin crafting something in this slot.");
+            }
+            else
+            {
+                string itemText = emoj switch { true => _items[furnace.NextItem].Emoji, false => " *" + _items[furnace.NextItem].Name + "*" };
+                embay.AddField(_items[furnace.NextItem].Name,
+                    $" > Crafting: {furnace.Amount}{itemText}\n > Progress: {Tools.ProgressBar((int)(furnace.TimeRequired - furnace.TimeLeft), (int)furnace.TimeRequired)}");
+            }
+        }
+
+        ComponentBuilder components = new ComponentBuilder();
+        ActionRowBuilder refresh = new ActionRowBuilder()
+            .WithButton("Refresh", "craft-home", ButtonStyle.Secondary);
+        ActionRowBuilder favorites = new ActionRowBuilder()
+            .WithButton("Favorites", "craft-page|fav", ButtonStyle.Success);
+        ActionRowBuilder recents = new ActionRowBuilder()
+            .WithButton("Recents", "craft-page|recent", ButtonStyle.Success);
+        ActionRowBuilder craftable = new ActionRowBuilder()
+            .WithButton("Max Craftable", "craft-page|craftable", ButtonStyle.Success);
+        List<int> faveRecipes = await user.GetListData("craft_favorites");
+        for (int i = 0; i < 4 && i < faveRecipes.Count; i++)
+        {
+            Item crafted = _items[_craftingRecipes[faveRecipes[i]].ItemCrafted];
+            favorites.WithButton(new ButtonBuilder().WithLabel(crafted.Name).WithStyle(ButtonStyle.Primary)
+                .WithEmote(Emote.Parse(crafted.Emoji)).WithCustomId($"craft-recipe|{faveRecipes[i]}|f"));
+        }
+        List<int> recentRecipes = await user.GetListData("craft_recents");
+        for (int i = 0; i < 4 && i < recentRecipes.Count; i++)
+        {
+            Item crafted = _items[_craftingRecipes[recentRecipes[i]].ItemCrafted];
+            recents.WithButton(new ButtonBuilder()
+                .WithLabel(crafted.Name)
+                .WithStyle(ButtonStyle.Primary)
+                .WithEmote(Emote.Parse(crafted.Emoji))
+                .WithCustomId($"craft-recipe|{recentRecipes[i]}|r"));
+        }
+        List<CraftingRecipe> craftableRecipes = _craftingRecipes.ToArray().ToList();
+        craftableRecipes.Sort((recipeA, recipeB) => (recipeA.AmountCraftable(user) - recipeB.AmountCraftable(user)));
+        for (int i = 0; i < 4 && i < craftableRecipes.Count; i++)
+        {
+            Item crafted = _items[craftableRecipes[i].ItemCrafted];
+            craftable.WithButton(new ButtonBuilder()
+                .WithLabel(crafted.Name)
+                .WithStyle(ButtonStyle.Primary)
+                .WithEmote(Emote.Parse(crafted.Emoji))
+                .WithCustomId($"craft-recipe|{craftableRecipes[i].ID}|c"));
+        }
+
+        components.AddRow(refresh);
+        components.AddRow(favorites);
+        components.AddRow(recents);
+        components.AddRow(craftable);
+        return new Tuple<string, Embed, MessageComponent>("Crafting text:", embay.Build(), components.Build());
+    }
+    private async Task Craft(SocketSlashCommand command)
+    {
+        Tuple<string, Embed, MessageComponent> furnaces = await FurnacesRaw(command.User.Id, Tools.ShowEmojis(command, Settings.BotID(), _client));
+        await command.RespondAsync(furnaces.Item1, embed: furnaces.Item2, components: furnaces.Item3);
+    }
     
     
     private async Task InventoryButton(SocketMessageComponent component, string settings)
@@ -1889,6 +1996,7 @@ public class GemBot
         if (id != oID)
         {
             await component.RespondAsync("This is not your inventory. You cannot click any buttons", ephemeral: true);
+            return;
         }
 
         string[] settings2 = settings.Split("|");
@@ -2025,8 +2133,103 @@ public class GemBot
         MineBlock block = _mineData.GetBlock(x, y);
         if (await user.GetData("mining", 0) == 1)
         {
+            block = _mineData.GetBlock(await user.GetData("miningAtX", x, false), await user.GetData("miningAtY", y, false));
             string progressBar = Tools.ProgressBar((int)block.Durability - (block.Left ?? block.GetLeft()), (int)block.Durability);
-            await component.RespondAsync($"You are already mining; you cannot start mining another block.\n > **Progress**: {progressBar}", ephemeral: true);
+            if ((block.Left ?? block.GetLeft()) == 0)
+            {
+                await user.SetData("mining", 0);
+            }
+            string etl = "Calculating... (you should not see this)";
+            int secondsLeft = (block.Left ?? block.GetLeft())/(5+ await Tools.CharmEffect(["minePower"], _items, user));
+            switch (secondsLeft)
+            {
+                case > 86400:
+                {
+                    int days = secondsLeft / 86400;
+                    secondsLeft -= days * 86400;
+                    int hours = secondsLeft / 3600;
+                    secondsLeft -= hours * 3600;
+                    int minutes = secondsLeft / 60;
+                    secondsLeft -= minutes * 60;
+                    etl = $"{days} days, {hours} hours, {minutes} minutes, and {secondsLeft} seconds left";
+                    break;
+                }
+                case > 3600:
+                {
+                    int hours = secondsLeft / 3600;
+                    secondsLeft -= hours * 3600;
+                    int minutes = secondsLeft / 60;
+                    secondsLeft -= minutes * 60;
+                    etl = $"{hours} hours, {minutes} minutes, and {secondsLeft} left";
+                    break;
+                }
+                case >= 60:
+                {
+                    int minutes = secondsLeft / 60;
+                    secondsLeft -= minutes * 60;
+                    string secondsProgress = secondsLeft < 10 ? '0' + secondsLeft.ToString() : secondsLeft.ToString();
+                    etl = $"{minutes}:{secondsProgress} (minutes:seconds) left";
+                    break;
+                }
+                case >= 1:
+                    etl = $"{secondsLeft} seconds remaining!";
+                    break;
+                default:
+                    etl = "Almost none!";
+                    break;
+            }
+            await component.RespondAsync($"You are already mining; you cannot start mining another block.\n > **Progress**: {progressBar}\n > **Estimated Time Remaining**: {etl}", ephemeral: true);
+            if (await Tools.CharmEffect(["betterAutoRefresh"], _items, user) == 0) {return;}
+            block = _mineData.GetBlock(await user.GetData("miningAtX", x, false), await user.GetData("miningAtY", y, false));
+            secondsLeft = block.GetLeft();
+            while (secondsLeft >= 0)
+            {
+                await Task.Delay(10 * secondsLeft);
+                user = await GetUser(component.User.Id);
+                block = _mineData.GetBlock(await user.GetData("miningAtX", x, false), await user.GetData("miningAtY", y, false)); 
+                etl = "Calculating... (you should not see this)";
+                secondsLeft = (block.Left ?? block.GetLeft())/(5+ await Tools.CharmEffect(["minePower"], _items, user));
+                switch (secondsLeft)
+                {
+                    case > 86400:
+                    {
+                        int days = secondsLeft / 86400;
+                        secondsLeft -= days * 86400;
+                        int hours = secondsLeft / 3600;
+                        secondsLeft -= hours * 3600;
+                        int minutes = secondsLeft / 60;
+                        secondsLeft -= minutes * 60;
+                        etl = $"{days} days, {hours} hours, {minutes} minutes, and {secondsLeft} seconds left";
+                        break;
+                    }
+                    case > 3600:
+                    {
+                        int hours = secondsLeft / 3600;
+                        secondsLeft -= hours * 3600;
+                        int minutes = secondsLeft / 60;
+                        secondsLeft -= minutes * 60;
+                        etl = $"{hours} hours, {minutes} minutes, and {secondsLeft} left";
+                        break;
+                    }
+                    case >= 60:
+                    {
+                        int minutes = secondsLeft / 60;
+                        secondsLeft -= minutes * 60;
+                        etl = $"{minutes}:{secondsLeft} (minutes:seconds) left";
+                        break;
+                    }
+                    case >= 1:
+                        etl = $"{secondsLeft} seconds remaining!";
+                        break;
+                    default:
+                        etl = "Almost none!";
+                        break;
+                }
+                await component.ModifyOriginalResponseAsync((properties) =>
+                {
+                    properties.Content = $"You are already mining; you cannot start mining another block.\n > **Progress**: {progressBar}\n > **Estimated Time Remaining**: {etl}";
+                });
+            }
             return;
         }
         if (block.Type == BlockType.Air)
@@ -2046,6 +2249,8 @@ public class GemBot
             {
                 block.Mine(component.User.Id, 0); //Mining with power will be determined during MineTick();
                 await _mineData.GetChunk(x / 20).Save(x / 20);
+                await user.SetData("miningAtX", x, false);
+                await user.SetData("miningAtY", y, false);
                 await user.SetData("mining", 1);
                 await component.RespondAsync("Successfully started mining this block!", ephemeral: true);
                 if (await Tools.CharmEffect(["betterAutoRefresh", "mineAutoRefresh"], _items, user) == 0) {return;}
@@ -2073,6 +2278,207 @@ public class GemBot
             }
         }
     }
+    private async Task CraftButton(SocketMessageComponent component, string settings)
+    {
+        string[] args = settings.Split("|");
+        ulong id = component.User.Id;
+        CachedUser user = await GetUser(id);
+        ulong oID = component.Message.Interaction.User.Id;
+        if (id != oID)
+        {
+            await component.RespondAsync("This is not your craft page. You cannot click any buttons", ephemeral: true);
+            return;
+        }
+        switch (args[0])
+        {
+            case "page":
+                if (args.Length < 2)
+                {
+                    throw new ButtonValueError();
+                }
+                switch (args[1])
+                {
+                    case "fav":
+                        List<int> faveRecipes = await user.User.GetListData("craft_favorites");
+                        MessageComponent faveButtons = PageLogic(faveRecipes);
+                        await component.UpdateAsync((MessageProperties properties) =>
+                        {
+                            properties.Components = faveButtons;
+                        });
+                        break;
+                    case "recent":
+                        List<int> recentRecipes = await user.User.GetListData("craft_recents");
+                        MessageComponent recentButtons = PageLogic(recentRecipes);
+                        await component.UpdateAsync((MessageProperties properties) =>
+                        {
+                            properties.Components = recentButtons;
+                        });
+                        break;
+                    case "profit":
+                        List<int> profitRecipes = new List<int>();
+                        for (int i = 0; i < _craftingRecipes.Count; i++)
+                        {
+                            CraftingRecipe recipeP = _craftingRecipes[i];
+                            if (recipeP.AmountCraftable(user) > 0)
+                            {
+                                profitRecipes.Add(i);
+                            }
+                        }
+                        profitRecipes.Sort((int a, int b) =>
+                        {
+                            CraftingRecipe recipeA = _craftingRecipes[a];
+                            CraftingRecipe recipeB = _craftingRecipes[b];
+                            return recipeA.CompareRecipeProfit(recipeB, _items);
+                        });
+                        MessageComponent profitButtons = PageLogic(profitRecipes);
+                        await component.UpdateAsync((MessageProperties properties) =>
+                        {
+                            properties.Components = profitButtons;
+                        });
+                        break;
+                    case "craftable":
+                        List<int> craftableRecipes = [];
+                        for (int i = 0; i < _craftingRecipes.Count; i++)
+                        {
+                            craftableRecipes.Add(i);
+                        }
+                        craftableRecipes.Sort((a, b) => (_craftingRecipes[a].AmountCraftable(user) - _craftingRecipes[b].AmountCraftable(user)));
+                        MessageComponent craftableButtons = PageLogic(craftableRecipes);
+                        await component.UpdateAsync((MessageProperties properties) =>
+                        {
+                            properties.Components = craftableButtons;
+                        });
+                        break;
+                    default:
+                        throw new ButtonValueError();
+                }
+                break;
+            case "recipe":
+                if (args.Length < 2) throw new ButtonValueError();
+                CraftingRecipe recipe = _craftingRecipes[int.Parse(args[1])];
+                EmbedBuilder embay = new EmbedBuilder();
+                Item crafted = _items[recipe.ItemCrafted];
+                Emote emoj = Emote.Parse(crafted.Emoji);
+                int craftable = recipe.AmountCraftable(user);
+                embay.WithTitle($"Crafting Recipe {recipe.ID}");
+                embay.AddField("Details", recipe.ToString(_items));
+                ActionRowBuilder topRow = new ActionRowBuilder()
+                    .WithButton("home", "craft-home", ButtonStyle.Secondary);
+                if ((await user.User.GetListData("craft_favorites")).Contains(recipe.ID))
+                    topRow.WithButton("un-favorite", $"craft-fav|{recipe.ID}|n", ButtonStyle.Danger);
+                else topRow.WithButton("favorite", $"craft-fav|{recipe.ID}|y", ButtonStyle.Success);
+                ActionRowBuilder craftRow = new ActionRowBuilder()
+                    .WithButton("x1", $"craft-craft|{recipe.ID}|1", ButtonStyle.Primary, emoj, disabled: craftable < 1)
+                    .WithButton("x5", $"craft-craft|{recipe.ID}|5", ButtonStyle.Primary, emoj, disabled: craftable < 5)
+                    .WithButton("x10", $"craft-craft|{recipe.ID}|10", ButtonStyle.Primary, emoj, disabled: craftable < 10)
+                    .WithButton("x40", $"craft-craft|{recipe.ID}|40", ButtonStyle.Primary, emoj, disabled: craftable < 40)
+                    .WithButton($"x{craftable}", $"craft-craft|{recipe.ID}|{craftable}", ButtonStyle.Primary, emoj, disabled: craftable <= 0);
+                Embed realEmbed = embay.Build();
+                MessageComponent recipeComponent = new ComponentBuilder().AddRow(topRow).AddRow(craftRow).Build();
+                await component.UpdateAsync((properties) =>
+                {
+                    properties.Embed = realEmbed;
+                    properties.Components = recipeComponent;
+                });
+                break;
+            case "home":
+                Tuple<string, Embed, MessageComponent> dat = await FurnacesRaw(id, true);
+                await component.UpdateAsync((properties) =>
+                {
+                    properties.Content = dat.Item1;
+                    properties.Embed = dat.Item2;
+                    properties.Components = dat.Item3;
+                });
+                break;
+            case "craft":
+                if (args.Length < 3) throw new ButtonValueError();
+                try
+                {
+                    user.NextCrafting ??= new List<Tuple<int, int>>();
+                    user.NextCrafting.Add(new Tuple<int, int>(int.Parse(args[1]), int.Parse(args[2])));
+                }
+                catch (FormatException)
+                {
+                    throw new ButtonValueError();
+                }
+                CraftingRecipe recipeCrafted = _craftingRecipes[int.Parse(args[1])];
+                Item itemCrafted = _items[recipeCrafted.ItemCrafted];
+                await component.RespondAsync($"Successfully started crafting {int.Parse(args[2])*recipeCrafted.AmountCrafted}x{itemCrafted.Emoji}", ephemeral: true);
+                break;
+            case "fav":
+                if (args.Length < 3) throw new ButtonValueError();
+                if (!int.TryParse(args[1], out int recipeID)) throw new ButtonValueError();
+                List<int> favorites = await user.User.GetListData("craft_favorites");
+                switch (args[2])
+                {
+                    case "y":
+                        if (favorites.Contains(recipeID))
+                        {
+                            await component.RespondAsync($"Crafting recipe {recipeID} is already favorited", ephemeral:true);
+                            return;
+                        }
+                        favorites.Add(recipeID);
+                        await user.User.SetListData("craft_favorites", favorites);
+                        await component.RespondAsync($"Crafting recipe {recipeID} successfully favorited!", ephemeral:true);
+                        break;
+                    case "n":
+                        if (!favorites.Contains(recipeID))
+                        {
+                            await component.RespondAsync($"Crafting recipe {recipeID} is already not favorited", ephemeral:true);
+                            return;
+                        }
+                        favorites.Remove(recipeID);
+                        await user.User.SetListData("craft_favorites", favorites);
+                        await component.RespondAsync($"Crafting recipe {recipeID} successfully un-favorited!", ephemeral:true);
+                        break;
+                    default:
+                        throw new ButtonValueError();
+                }
+                break;
+            default:
+                throw new ButtonValueError();
+        }
+        return;
+
+        MessageComponent PageLogic(List<int> recipeIDs)
+        {
+            int maximum = 1 + (recipeIDs.Count)/ 5;
+            if (maximum > 5) maximum = 5;
+            ActionRowBuilder[] rows = new ActionRowBuilder[maximum];
+            for (int i = 0; i < rows.Length; i++)
+            {
+                rows[i] = new ActionRowBuilder();
+            }
+            rows[0].WithButton(
+                new ButtonBuilder()
+                    .WithLabel("home")
+                    .WithStyle(ButtonStyle.Secondary)
+                    .WithCustomId("craft-home")
+                    );
+            foreach (var t in recipeIDs)
+            {
+                CraftingRecipe recipe = _craftingRecipes[t];
+                Item itemCrafted = _items[recipe.ItemCrafted];
+                foreach (ActionRowBuilder row in rows)
+                {
+                    if (row.Components.Count >= 5) continue;
+                    row.WithButton(
+                        new ButtonBuilder()
+                            .WithLabel(itemCrafted.Name)
+                            .WithEmote(Emote.Parse(itemCrafted.Emoji))
+                            .WithStyle(ButtonStyle.Primary)
+                            .WithCustomId($"craft-recipe|{t}"));
+                }
+            }
+            ComponentBuilder toReturn = new ComponentBuilder();
+            foreach (ActionRowBuilder row in rows)
+            {
+                toReturn.AddRow(row);
+            }
+            return toReturn.Build();
+        }
+        
+    }
     private Task ButtonHandlerSetup(SocketMessageComponent component)
     {
         _ = Task.Run(() => Task.FromResult(ButtonHandler(component)));
@@ -2094,6 +2500,9 @@ public class GemBot
                 case "mine":
                     await MineButton(component, realID[1]);
                     break;
+                case "craft":
+                    await CraftButton(component, realID[1]);
+                    break;
                 default:
                     await component.RespondAsync(
                         $"**Button type not found.**\n > `Button of id {realID[0]} and options {realID[1]} was not able to be executed because id {realID[0]} was not found.`",
@@ -2103,7 +2512,7 @@ public class GemBot
         }
         catch (ButtonValueError)
         {
-            await component.RespondAsync($"An internal error due to button definition prevented this button to be handled. \n > `Button of id {realID[0]} was found, but arguments {realID[1]} were not written correctly`\n**This usually happens when the button you clicked was old. Please run the command that gave you the button again and try again**");
+            await component.RespondAsync($"An internal error due to button definition prevented this button to be handled. \n > `Button of id {realID[0]} was found, but arguments {realID[1]} were not written correctly`\n**This usually happens when the button you clicked was old. Please run the command that gave you the button again and try again**", ephemeral: true);
         }
         catch (Exception e)
         {
@@ -2116,8 +2525,8 @@ public class GemBot
             await component.RespondAsync(embed: embay.Build());
         }
     }
-
-
+    
+    
     private Task TextMessageHandlerSetup(SocketMessage message)
     {
         _ = Task.Run(() => Task.FromResult(TextMessageHandler(message)));
@@ -2193,6 +2602,12 @@ public class GemBot
                 case "help":
                     await TextHelp(socketMessage);
                     break;
+                case "add_recipe":
+                    await CreateCraftingRecipe(socketMessage);
+                    break;
+                case "edit_recipe":
+                    await EditCraftingRecipe(socketMessage);
+                    break;
                 default:
                     await socketMessage.Channel.SendMessageAsync("This command was not found");
                     break;
@@ -2214,7 +2629,11 @@ public class GemBot
     {
         await message.Channel.SendMessageAsync("Deleting old commands (1/6)...");
         await _client.SetGameAsync("resting commands...");
-        string[] names = ["item", "balance", "beg", "stats", "inventory", "work", "magik", "hep", "start", "bank", "theme", "setting", "quests", "give", "mine", "play", "help"];
+        string[] names = ["item", "balance", "beg", "stats", "inventory", "work", "magik", "hep", "start", "bank", "theme", "setting", "quests", "give", "mine", "play", "help", "craft"];
+        List<string> existingCommands = new List<string>();
+        string[] forceUpdateCommands = message.Content.Split(" ")[1..];
+        bool forceUpdateAll = forceUpdateCommands.Contains("all");
+        Console.WriteLine(forceUpdateAll);
         IReadOnlyCollection<RestGlobalCommand>? commands = await  _client.Rest.GetGlobalApplicationCommands();
         foreach (RestGlobalCommand command in commands)
         {
@@ -2543,28 +2962,50 @@ public class GemBot
                 )
             )
             ;
+        SlashCommandBuilder craft = new SlashCommandBuilder()
+            .WithName("craft")
+            .WithDescription("Craft items from other items")
+            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall]);
         try
         {
             await message.Channel.SendMessageAsync("Pushing grinding commands (3/6)...");
-            await _client.CreateGlobalApplicationCommandAsync(beg.Build());
-            await _client.CreateGlobalApplicationCommandAsync(work.Build());
-            await _client.CreateGlobalApplicationCommandAsync(magik.Build());
-            await _client.CreateGlobalApplicationCommandAsync(mine.Build());
-            await _client.CreateGlobalApplicationCommandAsync(play.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("beg") || !existingCommands.Contains("beg")) 
+                await _client.CreateGlobalApplicationCommandAsync(beg.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("work") || !existingCommands.Contains("work")) 
+                await _client.CreateGlobalApplicationCommandAsync(work.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("magik") || !existingCommands.Contains("magik")) 
+                await _client.CreateGlobalApplicationCommandAsync(magik.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("mine") || !existingCommands.Contains("mine")) 
+                await _client.CreateGlobalApplicationCommandAsync(mine.Build()); 
+            if (forceUpdateAll || forceUpdateCommands.Contains("play") || !existingCommands.Contains("play")) 
+                await _client.CreateGlobalApplicationCommandAsync(play.Build());
             await message.Channel.SendMessageAsync("Pushing economy commands (4/6)....");
-            await _client.CreateGlobalApplicationCommandAsync(balance.Build());
-            await _client.CreateGlobalApplicationCommandAsync(inventory.Build());
-            await _client.CreateGlobalApplicationCommandAsync(quests.Build());
-            await _client.CreateGlobalApplicationCommandAsync(give.Build());
-            await _client.CreateGlobalApplicationCommandAsync(bank.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("balance") || !existingCommands.Contains("balance")) 
+                await _client.CreateGlobalApplicationCommandAsync(balance.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("inventory") || !existingCommands.Contains("inventory")) 
+                await _client.CreateGlobalApplicationCommandAsync(inventory.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("quests") || !existingCommands.Contains("quests")) 
+                await _client.CreateGlobalApplicationCommandAsync(quests.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("give") || !existingCommands.Contains("give")) 
+                await _client.CreateGlobalApplicationCommandAsync(give.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("bank") || !existingCommands.Contains("bank")) 
+                await _client.CreateGlobalApplicationCommandAsync(bank.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("craft") || !existingCommands.Contains("craft"))
+                await _client.CreateGlobalApplicationCommandAsync(craft.Build());
             await message.Channel.SendMessageAsync("Pushing info commands (5/6)...");
-            await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
-            await _client.CreateGlobalApplicationCommandAsync(stats.Build());
-            await _client.CreateGlobalApplicationCommandAsync(help.Build());
-            await _client.CreateGlobalApplicationCommandAsync(start.Build());
-            await message.Channel.SendMessageAsync("Pushing customation commands(6/6)...");
-            await _client.CreateGlobalApplicationCommandAsync(theme.Build());
-            await _client.CreateGlobalApplicationCommandAsync(settings.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("item") || !existingCommands.Contains("item")) 
+                await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("stats") || !existingCommands.Contains("stats")) 
+                await _client.CreateGlobalApplicationCommandAsync(stats.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("help") || !existingCommands.Contains("help")) 
+                await _client.CreateGlobalApplicationCommandAsync(help.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("start") || !existingCommands.Contains("start"))
+                await _client.CreateGlobalApplicationCommandAsync(start.Build());
+            await message.Channel.SendMessageAsync("Pushing customization commands(6/6)...");
+            if (forceUpdateAll || forceUpdateCommands.Contains("theme") || !existingCommands.Contains("theme"))
+                await _client.CreateGlobalApplicationCommandAsync(theme.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("setting") || !existingCommands.Contains("setting"))
+                await _client.CreateGlobalApplicationCommandAsync(settings.Build());
         }
         catch (HttpException exception)
         {
@@ -3090,6 +3531,8 @@ public class GemBot
             .AddField("$charm", " > **Params**: <itemID> <charmID> <property> <value>\n > **Description**: Set Item <itemID>'s Charm <charmID>'s <property> to <value>.")
             .AddField("$add_charm", " > **Params**: <itemID>\n > **Description**: Add another charm to Item <itemID>")
             .AddField("$iList", " > **Params**: <listName> <add/remove> <itemID>\n > **Description**: Add/remove <itemID> to item list <listName>. (creates List <listName> if it doesn't exist)")
+            .AddField("$add_recipe", " > **Params**: *none*\n > **Description**: Creates a new crafting recipe")
+            .AddField("$edit_recipe", " > **Params**: <recipeID> <property> <value>\n > **Description**: Set Crafting Recipe <recipeID>'s <property> to <value>")
             .Build();
         Embed embay2 = new EmbedBuilder()
             .WithTitle("Utility")
@@ -3112,6 +3555,170 @@ public class GemBot
             .Build();
         await message.Channel.SendMessageAsync("View Embeds for details!", embeds:[embay1, embay2, embay3, embay4, embay0]);
     }
+    private async Task CreateCraftingRecipe(SocketMessage message)
+    {
+        string[] args = message.ToString().Split(" ");
+        int id = _craftingRecipes.Count;
+        _craftingRecipes.Add(new CraftingRecipe(){ID = id});
+        RestUserMessage msg = await message.Channel.SendMessageAsync($"Created new crafting recipe with id {id}");
+        await Task.Delay(5000);
+        await msg.DeleteAsync();
+    }
+    private async Task EditCraftingRecipe(SocketMessage message)
+    {
+        string[] args = message.ToString().Split(" ");
+        if (args.Length < 4)
+        {
+            RestUserMessage msg = await message.Channel.SendMessageAsync("Usage of this command is: $edit_recipe <recipeID> <property> <value>");
+            await Task.Delay(5000);
+            await msg.DeleteAsync();
+            return;
+        }
+        int recipeID = int.Parse(args[1]);
+        if (recipeID >= _craftingRecipes.Count)
+        {
+            RestUserMessage msg = await message.Channel.SendMessageAsync("Please use $add_recipe to add another crafting recipe to the list.");
+            await Task.Delay(5000);
+            await msg.DeleteAsync();
+            return;
+        }
+        CraftingRecipe recipe = _craftingRecipes[recipeID];
+        switch (args[2])
+        {
+            case "time":
+                recipe.TimeRequired = uint.Parse(args[3]);
+                await recipe.Save();
+                break;
+            case "amount":
+                recipe.AmountCrafted = int.Parse(args[3]);
+                await recipe.Save();
+                break;
+            case "item":
+                int item = int.Parse(args[3]);
+                if (item >= _items.Count)
+                {
+                    RestUserMessage msgItem = await message.Channel.SendMessageAsync("This item does not exist.");
+                    await Task.Delay(5000);
+                    await msgItem.DeleteAsync();
+                    return;
+                }
+                recipe.ItemCrafted = item;
+                await recipe.Save();
+                break;
+            case "requirements":
+                switch (args[3])
+                {
+                    case "add":
+                        recipe.Requirements.Add(new CraftingRecipe.RecipeRequirements());
+                        break;
+                    case "remove":
+                        recipe.Requirements.RemoveAt(recipe.Requirements.Count - 1);
+                        break;
+                    default:
+                        int requirementID = 0;
+                        try
+                        {
+                            requirementID = int.Parse(args[3]);
+                            if (requirementID >= recipe.Requirements.Count || requirementID < 0)
+                            {
+                                throw new IndexOutOfRangeException();
+                            }
+                        }
+                        catch (FormatException)
+                        {
+                            RestUserMessage msgReqNotInt =
+                                await message.Channel.SendMessageAsync(
+                                    "You can either \"add\" a requirement, \"remove\" the last requirement, or enter a number to edit that requirement.");
+                            await Task.Delay(5000);
+                            await msgReqNotInt.DeleteAsync();
+                            return;
+                        }
+                        catch (IndexOutOfRangeException)
+                        {
+                            RestUserMessage msgReqOutOfRange = await message.Channel.SendMessageAsync(
+                                $"The specified requirement id is outside of the range (0 - {recipe.Requirements.Count - 1}).\nUse `$edit_recipe {recipeID} requirements add` to add a requirement.");
+                            await Task.Delay(5000);
+                            await msgReqOutOfRange.DeleteAsync();
+                            return;
+                        }
+                        if (args.Length < 6)
+                        {
+                            RestUserMessage msgReqTooShort = await message.Channel.SendMessageAsync("Please specify at least 5 arguments: $edit_recipe <recipeID> requirements <requirementID> <property> <value>");
+                            await Task.Delay(5000);
+                            await msgReqTooShort.DeleteAsync();
+                            return;
+                        }
+                        switch (args[4])
+                        {
+                            case "item":
+                                try
+                                {
+                                    int itemID = int.Parse(args[5]);
+                                    if (itemID >= _items.Count || itemID < 0)
+                                    {
+                                        throw new IndexOutOfRangeException();
+                                    }
+                                    recipe.Requirements[requirementID].Item = itemID;
+                                    break;
+                                }
+                                catch (FormatException)
+                                {
+                                    RestUserMessage msgReqItemNotInt =
+                                        await message.Channel.SendMessageAsync(
+                                            "Argument 5 (after \"item\") expects an item ID, which is an integer.");
+                                    await Task.Delay(5000);
+                                    await msgReqItemNotInt.DeleteAsync();
+                                    return;
+                                }
+                                catch (IndexOutOfRangeException)
+                                {
+                                    RestUserMessage msgReqItemOutOfRange =
+                                        await message.Channel.SendMessageAsync($"The item ID {int.Parse(args[5])} was outside of the range of items (0-{_items.Count -1}");
+                                    await Task.Delay(5000);
+                                    await msgReqItemOutOfRange.DeleteAsync();
+                                    return;
+                                }
+                            case "amount":
+                                try
+                                {
+                                    int amount = int.Parse(args[5]);
+                                    if (amount < 0)
+                                    {
+                                        throw new IndexOutOfRangeException();
+                                    }
+
+                                    recipe.Requirements[requirementID].Amount = amount;
+                                    break;
+                                }
+                                catch (FormatException)
+                                {
+                                    RestUserMessage msgReqAmountNotInt =
+                                        await message.Channel.SendMessageAsync(
+                                            "Argument 5 (after \"item\") expects an item ID, which is an integer.");
+                                    await Task.Delay(5000);
+                                    await msgReqAmountNotInt.DeleteAsync();
+                                    return;
+                                }
+                                catch (IndexOutOfRangeException)
+                                {
+                                    RestUserMessage msgReqAmountOutOfRange = await message.Channel.SendMessageAsync(
+                                        "A recipe must require a positive number of each ingredient");
+                                    await Task.Delay(5000);
+                                    await msgReqAmountOutOfRange.DeleteAsync();
+                                    return;
+                                }
+                        }
+                        break;
+                }
+                break;
+            default:
+                RestUserMessage msgNone = await message.Channel.SendMessageAsync("Please specify the property you would like to edit:\n> **time**, **amount**, **item**, or **requirements**.");
+                await Task.Delay(5000);
+                await msgNone.DeleteAsync();
+                return;
+        }
+        await message.Channel.SendMessageAsync(recipe.ToString(_items));
+    }
 
 
     private async Task RunTicks()
@@ -3122,14 +3729,21 @@ public class GemBot
         uint taskTimes = 0;
         while (true)
         {
-            //every tick
             Console.WriteLine($"Tick {taskTimes}...");
-            _ = Task.Run(() => Task.FromResult(MineTick()));
+            if (true) //every tick
+            {
+                _ = Task.Run(() => Task.FromResult(MineTick()));
+                _ = Task.Run(() => Task.FromResult(CraftTick()));
+            }
             if (taskTimes % 60 == 0) //every minute
             {
                 _ = Task.Run(() => Task.FromResult(_mineData.SaveMineData()));
             }
-            if (taskTimes % 60 * 60 * 24 == 0) //every day
+            if (taskTimes % 120 == 0) //Every two minutes
+            {
+                _ = Task.Run(() => Task.FromResult(RemoveInactiveUsersTick()));
+            }
+            if (taskTimes % 60 * 60 == 0) //every hour
             {
                 if (DateTime.Today.Month.ToString() != _mineData.MonthName)
                 {
@@ -3200,6 +3814,84 @@ public class GemBot
                     catch(Exception e){Console.WriteLine(e);}
                 }
             }
+        }
+    }
+    private async Task RemoveInactiveUsersTick()
+    {
+        ulong now = Tools.CurrentTime();
+        const ulong inactiveLoaded = 60 * 60 * 24; //24 hours
+        ulong oldTime = now - inactiveLoaded;
+        List<ulong> usersToRemove = new List<ulong>();
+        foreach (ulong id in _users.Keys)
+        {
+            CachedUser user = _users[id];
+            if (user.InactiveSince >= oldTime) continue;
+            await user.User.Save();
+            usersToRemove.Add(id);
+        }
+        foreach (ulong id in usersToRemove)
+        {
+            _users.Remove(id);
+        }
+    }
+    private async Task CraftTick()
+    {
+        foreach (CachedUser user in _users.Values)
+        {
+           await user.User.CheckFurnaces(await Tools.CharmEffect(["FurnaceSlots"], _items, user) + FurnaceConst);
+           foreach (CraftingRecipe.Furnace furnace in user.User.Furnaces)
+           {
+               if (furnace.Crafting)
+               {
+                   if (furnace.TimeLeft > 1) furnace.TimeLeft--;
+                   else
+                   {
+                       await user.User.GainItem(furnace.NextItem, furnace.Amount);
+                       furnace.Crafting = false;
+                   }
+               }
+               else
+               {
+                   if (user.NextCrafting == null)
+                   {
+                       // ReSharper disable once UseCollectionExpression
+                       user.NextCrafting = new List<Tuple<int, int>>();
+                       continue;
+                   }
+                   
+                   if (user.NextCrafting.Count <= 0) continue;
+                   if (user.NextCrafting[0].Item2 <= 0)
+                   {
+                       user.NextCrafting.RemoveAt(0);
+                       continue;
+                   }
+
+                   CraftingRecipe recipe = _craftingRecipes[user.NextCrafting[0].Item1];
+                   bool failedRecipe = false;
+                   foreach (CraftingRecipe.RecipeRequirements requirement in recipe.Requirements)
+                   {
+                       if (user.User.Inventory[requirement.Item] >= requirement.Amount) continue;
+                       Tuple<int, int> failedCraft = user.NextCrafting[0];
+                       user.NextCrafting.RemoveAt(0);
+                       user.NextCrafting.Add(failedCraft);
+                       failedRecipe = true;
+                   }
+                   if (failedRecipe) continue;
+                   user.NextCrafting[0] = 
+                       new Tuple<int, int>(user.NextCrafting[0].Item1, user.NextCrafting[0].Item2 - 1);
+                   if (user.NextCrafting[0].Item2 <= 0)
+                   {
+                       user.NextCrafting.RemoveAt(0);
+                   }
+
+                   foreach (CraftingRecipe.RecipeRequirements requirement in recipe.Requirements)
+                   {
+                       await user.User.GainItem(requirement.Item, -1 * requirement.Amount, false);
+                   }
+                   await user.User.Save();
+                   furnace.UpdateFromCraftingRecipe(recipe);
+               }
+           }
         }
     }
 }

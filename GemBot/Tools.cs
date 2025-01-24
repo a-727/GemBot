@@ -1,4 +1,5 @@
 using Discord;
+using Discord.Interactions;
 using Discord.WebSocket;
 using Newtonsoft.Json;
 using InvalidOperationException = System.InvalidOperationException;
@@ -180,7 +181,7 @@ public static class Tools
         }
         return false; //Since every other case has returned, the bot is in a server where it doesn't have permissions to use emojis. So, let's return that.
     }
-
+    
     public static string IDString(int id, string directory = "Data/Items")
     {
         return id switch
@@ -191,5 +192,22 @@ public static class Tools
             >= 0 => $"{directory}/00{id}.json",
             _ => throw new InvalidArgumentException()
         };
+    }
+    public class ItemAutocompleteHandler : AutocompleteHandler
+    {
+        public List<Item> Items { get; set; }
+        public ItemAutocompleteHandler(List<Item> items)
+        {
+            Items = items;
+        }
+        public override async Task<AutocompletionResult> GenerateSuggestionsAsync(IInteractionContext context, IAutocompleteInteraction autocompleteInteraction, IParameterInfo parameter, IServiceProvider services)
+        {
+            // Create a collection with suggestions for autocomplete
+            List<AutocompleteResult> results = new List<AutocompleteResult>();
+                Console.WriteLine(context.Interaction.Data.ToString());
+
+            // max - 25 suggestions at a time (API limit)
+            return AutocompletionResult.FromSuccess(results.Take(25));
+        }
     }
 }
