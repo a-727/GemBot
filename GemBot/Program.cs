@@ -466,18 +466,22 @@ public class GemBot
         int chanceRoll = _rand.Next(0, 500) + 1; //random number from 1 to 500
         await user.Increase("commands", 1, false);
         await user.Increase("beg", 1);
-        int sucsessChance = 500 - (int) user.GetProgress("BegSuccess") + await Tools.CharmEffect(["BegChance", "Beg"], _items, user);
+        int sucsessChance = 300 - (int) user.GetProgress("begSuccess") + await Tools.CharmEffect(["BegChance", "Beg"], _items, user);
         if (sucsessChance < 50) sucsessChance = 50;
         if (chanceRoll > sucsessChance)
         {
+            uint color = (uint)(await user.GetSetting("begRandom", 0) switch
+            {
+                0 => await user.GetSetting("begColor", 65525),
+                1 => (ulong)_rand.Next(16777216), 
+                _ => (ulong)3342180
+            });
+            if (await user.GetSetting("begFailRed", 1) == 1) color = 16711680;
             await user.Increase("begFail", 1);
             EmbedBuilder embayFail = new EmbedBuilder()
                 .WithTitle("Beg failure!")
-                .WithDescription($"You failed and didn't get any gems. \n -# You had a {sucsessChance/5}.{(sucsessChance%5) * 2}% chance to succeed.")
-                .WithColor(new Color((uint)(await user.GetSetting("begRandom", 0) switch
-                {
-                    0 => await user.GetSetting("begColor", 65525), 1 => (ulong)_rand.Next(16777216), _ => (ulong)3342180
-                })));
+                .WithDescription($"You failed and didn't get any gems. \n > You had a {sucsessChance/5}.{(sucsessChance%5) * 2}% chance to succeed.")
+                .WithColor(new Color(color));
             await command.RespondAsync(embed: embayFail.Build(), ephemeral:await user.GetSetting("hideBeg", 0) == 1);
             return;
         }
@@ -520,9 +524,48 @@ public class GemBot
             throw new Cooldown(user.CoolDowns["work"]);
         }
         int workNum = _rand.Next(255) + 1;
-        int mn = 10 + await Tools.CharmEffect(["WorkMin", "Work", "GrindMin", "Grind", "Positive"], _items, user);
-        int mx = 16 + await Tools.CharmEffect(["WorkMax", "Work", "GrindMax", "Grind", "Positive"], _items, user);
-        int amnt = _rand.Next(mn, mx);
+        cached.LastWork = (byte) workNum;
+        int jobRandom = _rand.Next(1);
+        EmbedBuilder embay = new EmbedBuilder().WithTitle("Work!");
+        ComponentBuilder components = new ComponentBuilder();
+        string text = "View embed for more information.";
+        switch (jobRandom)
+        {
+            case 0:
+                List<string> hearts = [":heart:", ":orange_heart:", ":yellow_heart:", ":green_heart:", ":blue_heart:", ":purple_heart:"];
+                List<string> squares = [":red_square:", ":orange_square:", ":yellow_square:", ":green_square:", ":blue_square:", ":purple_square:"];
+                List<string> circles = [":red_circle:", ":orange_circle:", ":yellow_circle:", ":green_circle:", ":blue_circle:", ":purple_circle:"];
+                List<string> types = ["heart", "square", "circle"];
+                int choiceShape = _rand.Next(3);
+                int heartID = _rand.Next(hearts.Count);
+                int squareID = _rand.Next(squares.Count);
+                int circleID = _rand.Next(circles.Count);
+                embay.WithDescription($"Remember the color of the following shapes\n > {hearts[heartID]} {squares[squareID]} {circles[circleID]}");
+                await command.RespondAsync(text, embed: embay.Build());
+                await Task.Delay(8000);
+                embay.WithDescription($"What was the color of the {types[choiceShape]}?");
+                int chosenID = choiceShape switch { 0 => heartID, 1 => squareID, _ => circleID };
+                List<string> chosenList = choiceShape switch { 0 => hearts, 1=> squares, _ => circles };
+                int excludedShape = _rand.Next(5);
+                if (excludedShape >= chosenID) excludedShape++;
+                ActionRowBuilder rowShapes = new ActionRowBuilder();
+                for (int i = 0; i < chosenList.Count; i++)
+                {
+                    if (i == excludedShape) continue;
+                    string customIDShapes = "work-" + (i == chosenID) switch { true => "success", false => "failure" } + $"|{workNum}|{Tools.ShowEmojis(command, Settings.BotID(), _client)}|{i}";
+                    // ReSharper disable once GrammarMistakeInComment
+                    //I is added to prevent custom ID duplication.
+                    rowShapes.WithButton(customId: customIDShapes, emote: Emoji.Parse(chosenList[i]), style: ButtonStyle.Primary);
+                }
+                components.AddRow(rowShapes);
+                await command.ModifyOriginalResponseAsync((properties) =>
+                {
+                    properties.Embed = embay.Build();
+                    properties.Components = components.Build();
+                });
+                break;
+        }
+        /*
         await user.Add(amnt, 1, false);
         string text = $"You gained {amnt} **Emeralds**.";
         if (Tools.ShowEmojis(command, Settings.BotID(), _client))
@@ -538,6 +581,7 @@ public class GemBot
             .WithDescription(workChoices[_rand.Next(0, workChoices.Count)])
             .WithColor(new Color(50, 255, 100));
         await command.RespondAsync(embed: embay.Build());
+        */
     }
     private async Task<EmbedBuilder> InventoryRawEmbed(ulong id, string options)
     {
@@ -2372,7 +2416,7 @@ public class GemBot
                     .WithButton("x5", $"craft-craft|{recipe.ID}|5", ButtonStyle.Primary, emoj, disabled: craftable < 5)
                     .WithButton("x10", $"craft-craft|{recipe.ID}|10", ButtonStyle.Primary, emoj, disabled: craftable < 10)
                     .WithButton("x40", $"craft-craft|{recipe.ID}|40", ButtonStyle.Primary, emoj, disabled: craftable < 40)
-                    .WithButton($"x{craftable}", $"craft-craft|{recipe.ID}|{craftable}", ButtonStyle.Primary, emoj, disabled: craftable <= 0);
+                    .WithButton($"x{craftable}", $"craft-craft|{recipe.ID}|{craftable}|c", ButtonStyle.Primary, emoj, disabled: craftable <= 0);
                 Embed realEmbed = embay.Build();
                 MessageComponent recipeComponent = new ComponentBuilder().AddRow(topRow).AddRow(craftRow).Build();
                 await component.UpdateAsync((properties) =>
@@ -2479,6 +2523,83 @@ public class GemBot
         }
         
     }
+    private async Task WorkButton(SocketMessageComponent component, string settings)
+    {
+        string[] args = settings.Split("|");
+        if (args.Length < 3) throw new ButtonValueError();
+        ulong id = component.User.Id;
+        CachedUser user = await GetUser(id);
+        ulong oID = component.Message.Interaction.User.Id;
+        if (id != oID)
+        {
+            await component.RespondAsync("This is not your work page. You cannot click any buttons", ephemeral: true);
+            return;
+        }
+        if (!int.TryParse(args[1], out int workID)) throw new ButtonValueError();
+        if (workID != user.LastWork)
+        {
+            EmbedBuilder wrongIdEmbay = new EmbedBuilder()
+                .WithTitle("Old Work")
+                .WithDescription("This button is outdated.");
+            await component.UpdateAsync((properties) => { properties.Embed = wrongIdEmbay.Build(); });
+            return;
+        }
+        user.LastWork = 0;
+        int mn = 10 + await Tools.CharmEffect(["WorkMin", "Work", "GrindMin", "Grind", "Positive"], _items, user);
+        int mx = 16 + await Tools.CharmEffect(["WorkMax", "Work", "GrindMax", "Grind", "Positive"], _items, user);
+        int amnt = _rand.Next(mn, mx);
+        switch (args[0])
+        {
+            case "success":
+                await user.User.Add(amnt, 1, false);
+                string text = $"You gained {amnt} **Emeralds**.";
+                if (args[3] == "True")
+                {
+                    text = $"You gained {amnt}{_currency[1]}!!!";
+                }
+                await user.User.Increase("commands",1, false);
+                await user.User.Increase("earned", amnt*10, false);
+                await user.User.Increase("workSuccess", 1, false);
+                await user.User.Increase("work", 1);
+                List<string> workChoices = _dataLists["WorkEffect"];
+                Embed embay = new EmbedBuilder()
+                    .WithTitle(text)
+                    .WithDescription(workChoices[_rand.Next(0, workChoices.Count)])
+                    .WithColor(new Color(50, 255, 100))
+                    .Build();
+                await component.UpdateAsync((properties) =>
+                {
+                    properties.Embed = embay;
+                    properties.Components = null;
+                });
+                break;
+            case "failure":
+                amnt = _rand.Next(1, amnt);
+                await user.User.Add(amnt, 1, false);
+                string textFail = $"You gained {amnt} **Emeralds**.";
+                if (args[3] == "true")
+                {
+                    text = $"You gained {amnt}{_currency[1]}!!!";
+                }
+                await user.User.Increase("commands",1, false);
+                await user.User.Increase("earned", amnt*10, false);
+                await user.User.Increase("workSuccess", 1, false);
+                await user.User.Increase("work", 1);
+                Embed embayFail = new EmbedBuilder()
+                    .WithTitle(textFail)
+                    .WithDescription("you failed!")
+                    .WithColor(new Color(255, 0, 0))
+                    .Build();
+                await component.UpdateAsync((properties) =>
+                {
+                    properties.Embed = embayFail;
+                    properties.Components = null;
+                });
+                break;
+            default:
+                throw new ButtonValueError();
+        }
+    }
     private Task ButtonHandlerSetup(SocketMessageComponent component)
     {
         _ = Task.Run(() => Task.FromResult(ButtonHandler(component)));
@@ -2502,6 +2623,9 @@ public class GemBot
                     break;
                 case "craft":
                     await CraftButton(component, realID[1]);
+                    break;
+                case "work":
+                    await WorkButton(component, realID[1]);
                     break;
                 default:
                     await component.RespondAsync(
@@ -3708,6 +3832,8 @@ public class GemBot
                                     return;
                                 }
                         }
+
+                        await recipe.Save();
                         break;
                 }
                 break;
