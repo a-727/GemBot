@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Threading.Channels;
 using Discord;
 using Discord.Net;
 using Discord.Rest;
@@ -49,10 +48,13 @@ public class GemBot
     private Dictionary<ulong, CachedUser> _users = [];
     private readonly string[] _currency = ["<:diamond:1287084308485640288>", "<:emerald:1287084632428515338>", "<:sapphire:1287086790137876530>", "<:ruby:1287086175974199347>", "<:amber:1287084015135756289>"];
     private readonly string[] _currencyNoEmoji = [" **diamonds**", " **emeralds**", " **sapphires**", " **rubies**", " **amber**"];
+    private readonly string[] _currencyNoEmojiNoFormatting = ["diamonds", "emeralds", "sapphires", "rubies", "amber"];
+    private bool _running;
     private List<DailyQuest> _quests = [];
     private List<List<DailyQuest>> _allQuests = [];
     private MineData _mineData = null!;
     private List<CraftingRecipe> _craftingRecipes = [];
+    private List<Drop> _drops = [];
     public async Task Main()
     {
         _client.Log += Log;
@@ -69,20 +71,11 @@ public class GemBot
             throw new NoTokenError();
         }
         await GetItems();
-        foreach (string path in Directory.GetFiles("Data/CraftingRecipes"))
-        {
-            string recipeData = await File.ReadAllTextAsync(path);
-            CraftingRecipe? recipe = JsonConvert.DeserializeObject<CraftingRecipe>(recipeData);
-            if (recipe is not null)
-            {
-                _craftingRecipes.Add(recipe);
-            }
-        }
-        _craftingRecipes = _craftingRecipes.OrderBy(o => o.ID).ToList();
         _mineData = await MineData.LoadMineData();
         _ = Task.Run(() => Task.FromResult(RunTicks()));
         await _client.LoginAsync(TokenType.Bot, token);
         await _client.StartAsync();
+        _running = true;
         await Task.Delay(-1);
     }
     
@@ -175,6 +168,32 @@ public class GemBot
             }
             await File.WriteAllTextAsync("Data/DailyQuests/DateQuestsMap.txt", JsonConvert.SerializeObject(mapToQuests));
         }
+
+        _craftingRecipes = [];
+        foreach (string path in Directory.GetFiles("Data/CraftingRecipes"))
+        {
+            string recipeData = await File.ReadAllTextAsync(path);
+            CraftingRecipe? recipe = JsonConvert.DeserializeObject<CraftingRecipe>(recipeData);
+            if (recipe is not null)
+            {
+                _craftingRecipes.Add(recipe);
+            }
+        }
+        _craftingRecipes = _craftingRecipes.OrderBy(o => o.ID).ToList();
+
+        _drops = [];
+        foreach (string path in Directory.GetFiles("Data/Drops"))
+        {
+            string dropData = await File.ReadAllTextAsync(path);
+            Drop? drop = JsonConvert.DeserializeObject<Drop>(dropData);
+            if (drop is null) continue;
+            if (drop.Left[0] <= 0 && drop.Left[1] <= 0 && drop.Left[2] <= 0 && drop.Left[3] <= 0 && drop.Left[4] <= 0)
+            { //File.Delete(path);
+              continue;
+            }
+            _drops.Add(drop);
+        }
+        _drops = _drops.OrderBy(o => o.DropID).ToList();
         await _client.SetGameAsync("/start");
     }
     private async Task<CachedUser> GetUser(ulong id)
@@ -208,12 +227,16 @@ public class GemBot
     
     private Task CommandHandlerStartup(SocketSlashCommand command)
     {
-        _ = Task.Run(() => Task.FromResult(CommandHandler(command)));
+        _ = CommandHandler(command);
         return Task.CompletedTask;
     }
     //Slash Command Handler Below
     private async Task CommandHandler(SocketSlashCommand command)
     {
+        if (!_running)
+        {
+            await command.RespondAsync("GemBOT is currently down. Please try again soon.", ephemeral: true);
+        }
         try
         {
             switch (command.Data.Name)
@@ -281,6 +304,12 @@ public class GemBot
                     break;
                 case "craft":
                     await Craft(command);
+                    break;
+                case "shop":
+                    await Shop(command);
+                    break;
+                case "spin" or "wheel":
+                    await Spin(command);
                     break;
                 default:
                     await command.RespondAsync($"Command {command.Data.Name} not found", ephemeral: true);
@@ -553,8 +582,7 @@ public class GemBot
                 {
                     if (i == excludedShape) continue;
                     string customIDShapes = "work-" + (i == chosenID) switch { true => "success", false => "failure" } + $"|{workNum}|{Tools.ShowEmojis(command, Settings.BotID(), _client)}|{i}";
-                    // ReSharper disable once GrammarMistakeInComment
-                    //I is added to prevent custom ID duplication.
+                    //{i} is added to prevent custom ID duplication.
                     rowShapes.WithButton(customId: customIDShapes, emote: Emoji.Parse(chosenList[i]), style: ButtonStyle.Primary);
                 }
                 components.AddRow(rowShapes);
@@ -563,6 +591,10 @@ public class GemBot
                     properties.Embed = embay.Build();
                     properties.Components = components.Build();
                 });
+                break;
+            default:
+                await user.OnCoolDown("work", t - 1, 0);
+                await command.RespondAsync("This work was bugged, so we reset the cooldown. Please /work again.", ephemeral: true);
                 break;
         }
         /*
@@ -704,45 +736,35 @@ public class GemBot
         [
             new Tuple<string, int, int, int, int, int>("You gained 8$diamonds.", 8, 0, 1, 0, 9),
             new Tuple<string, int, int, int, int, int>("You gained 1$emeralds.", 1, 0, 0, 0, 4),
-            new Tuple<string, int, int, int, int, int>("Nothing happened", 0, 0, 0, 0, 7),
+            new Tuple<string, int, int, int, int, int>("Nothing happened", 0, 0, 0, 0, 21+power),
             new Tuple<string, int, int, int, int, int>("$target gained 10$diamonds", 0, 0, 10, 0, 6)
         ];
         if (power >= 1)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 7$diamonds", 7, 0, 7,
-                0, 10));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 8$diamonds", 8, 0, 8,
-                0, 4));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 7$diamonds", 7, 0, 7, 0, 10));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 8$diamonds", 8, 0, 8, 0, 4));
         }
 
         if (power >= 3)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 11$diamonds!", 11, 0,
-                11, 0, 12));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 11$diamonds!", 11, 0, 11, 0, 12));
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained 2$emeralds!", 2, 1, 0, 0, 8));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained 2$emeralds", 0, 0, 2, 1, 6));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0,
-                power));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1,
-                power));
+            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
+            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
         }
 
         if (power >= 4)
         {
-            chances.Add(
-                new Tuple<string, int, int, int, int, int>("$user and $target gained 1$emeralds", 1, 1, 1, 1, 15));
-            chances.Add(
-                new Tuple<string, int, int, int, int, int>("$user and $target gained 2$emeralds", 2, 1, 2, 1, 5));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 3$emeralds", 3, 1, 3,
-                1, 2));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 1$emeralds", 1, 1, 1, 1, 15));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 2$emeralds", 2, 1, 2, 1, 5));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 3$emeralds", 3, 1, 3, 1, 2));
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained 1$sapphires", 1, 2, 0, 0, 1));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained 1$sapphires", 0, 0, 1, 2, 1));
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_wand", 0, 0, 0, 0, 1));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_wand", 0, 0, 0, 0, 1));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0,
-                power));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1,
-                power));
+            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
+            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
         }
 
         if (power >= 5)
@@ -753,40 +775,31 @@ public class GemBot
 
         if (power >= 6)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 80$diamonds", 80, 0, 80, 0,
-                12));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 80$diamonds", 80, 0, 80, 0, 12));
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained 120$diamonds", 120, 0, 0, 0, 6));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained 120$diamonds", 0, 0, 120, 0, 6));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0,
-                power));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1,
-                power));
+            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
+            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
         }
 
         if (power >= 8)
         {
-            chances.Add(
-                new Tuple<string, int, int, int, int, int>("$user gained $user_wand\n$target gained $target_wand", 0, 0,
-                    0, 0, 1));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_wand\n$target gained $target_wand", 0, 0, 0, 0, 1));
         }
 
         if (power >= 9)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm", 0, 0, 0, 0, 5));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm", 0, 0, 0, 0, 4));
-            chances.Add(
-                new Tuple<string, int, int, int, int, int>("$user gained $user_charm and $target gained $target_charm",
-                    0, 0, 0, 0, 1));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm and $target gained $target_charm", 0, 0, 0, 0, 1));
         }
 
         if (power >= 10)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm", 0, 0, 0, 0, 5));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm", 0, 0, 0, 0, 4));
-            chances.Add(
-                new Tuple<string, int, int, int, int, int>("$user gained $user_charm, $user_charm2", 0, 0, 0, 0, 2));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm, $target_charm2", 0, 0,
-                0, 0, 1));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm, $user_charm2", 0, 0, 0, 0, 2));
+            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm, $target_charm2", 0, 0, 0, 0, 1));
         }
 
         List<int> pickFrom = [];
@@ -967,69 +980,80 @@ public class GemBot
         {
             //default = 0
             case 0:
-                await user.SetSetting("bankLeftStyle", 0);
-                await user.SetSetting("bankRightStyle", 2);
-                await user.SetSetting("bankShowRed", 1);
-                await user.SetSetting("begRandom", 0);
-                await user.SetSetting("begColor", 65525);
-                await user.SetSetting("magikRandomColor", 1);
-                await user.SetSetting("uiColor", 3287295);
+                await user.SetSetting("bankLeftStyle", 0, false);
+                await user.SetSetting("bankRightStyle", 2, false);
+                await user.SetSetting("bankShowRed", 1, false);
+                await user.SetSetting("begRandom", 0, false);
+                await user.SetSetting("begColor", 65525, false);
+                await user.SetSetting("magikRandomColor", 1, false);
+                await user.SetSetting("uiColor", 3287295, false);
+                await user.SetSetting("begFailRed", 1, false);
+                await user.Save();
                 themeName = "default";
                 break;
             //discord = 1
             case 1:
-                await user.SetSetting("bankLeftStyle", 0);
-                await user.SetSetting("bankRightStyle", 0);
-                await user.SetSetting("bankShowRed", 0);
-                await user.SetSetting("begRandom", 0);
-                await user.SetSetting("begColor", 5793266);
-                await user.SetSetting("magikRandomColor", 0);
-                await user.SetSetting("magikColor", 6584831);
-                await user.SetSetting("uiColor", 6566600);
+                await user.SetSetting("bankLeftStyle", 0, false);
+                await user.SetSetting("bankRightStyle", 0, false);
+                await user.SetSetting("bankShowRed", 0, false);
+                await user.SetSetting("begRandom", 0, false);
+                await user.SetSetting("begColor", 5793266, false);
+                await user.SetSetting("magikRandomColor", 0, false);
+                await user.SetSetting("magikColor", 6584831, false);
+                await user.SetSetting("uiColor", 6566600, false);
+                await user.SetSetting("begFailRed", 1, false);
+                await user.Save();
                 themeName = "Discord";
                 break;
             //green = 2
             case 2:
-                await user.SetSetting("bankLeftStyle", 1);
-                await user.SetSetting("bankRightStyle", 1);
-                await user.SetSetting("bankShowRed", 1);
-                await user.SetSetting("begRandom", 0);
-                await user.SetSetting("begColor", 3342180);
-                await user.SetSetting("magikRandomColor", 1);
-                await user.SetSetting("uiColor", 57640);
+                await user.SetSetting("bankLeftStyle", 1, false);
+                await user.SetSetting("bankRightStyle", 1, false);
+                await user.SetSetting("bankShowRed", 1, false);
+                await user.SetSetting("begRandom", 0, false);
+                await user.SetSetting("begColor", 3342180, false);
+                await user.SetSetting("magikRandomColor", 1, false);
+                await user.SetSetting("uiColor", 57640, false);
+                await user.SetSetting("begFailRed", 1, false);
                 themeName = "Green";
                 break;
             //grey = 3
             case 3:
-                await user.SetSetting("bankLeftStyle", 2);
-                await user.SetSetting("bankRightStyle", 2);
-                await user.SetSetting("bankShowRed", 1);
-                await user.SetSetting("begRandom", 0);
-                await user.SetSetting("begColor", 8224125);
-                await user.SetSetting("magikRandomColor", 0);
-                await user.SetSetting("magikColor", 0);
-                await user.SetSetting("uiColor", 5260890);
+                await user.SetSetting("bankLeftStyle", 2, false);
+                await user.SetSetting("bankRightStyle", 2, false);
+                await user.SetSetting("bankShowRed", 1, false);
+                await user.SetSetting("begRandom", 0, false);
+                await user.SetSetting("begColor", 8224125, false);
+                await user.SetSetting("magikRandomColor", 0, false);
+                await user.SetSetting("magikColor", 0, false);
+                await user.SetSetting("uiColor", 5260890, false);
+                await user.SetSetting("begFailRed", 1, false);
+                await user.Save();
                 themeName = "Grey";
                 break;
             //random = 4
             case 4:
-                await user.SetSetting("bankLeftStyle", (ulong)_rand.Next(0, 3));
-                await user.SetSetting("bankShowRed", (ulong)_rand.Next(0, 2));
-                await user.SetSetting("begRandom", 1);
-                await user.SetSetting("magikRandomColor", 1);
-                await user.SetSetting("uiColor", (ulong)_rand.Next(16777216));
-                await user.SetSetting("bankRightStyle", (ulong)_rand.Next(0, 3));
+                await user.SetSetting("bankLeftStyle", (ulong)_rand.Next(0, 3), false);
+                await user.SetSetting("bankShowRed", (ulong)_rand.Next(0, 2), false);
+                await user.SetSetting("begRandom", 1, false);
+                await user.SetSetting("magikRandomColor", 1, false);
+                await user.SetSetting("uiColor", (ulong)_rand.Next(16777216), false);
+                await user.SetSetting("bankRightStyle", (ulong)_rand.Next(0, 3), false);
+                await user.SetSetting("begFailRed", (ulong)_rand.Next(2), false);
+                await user.Save();
                 themeName = "Random (the uiColor is randomized just once: now)";
                 break;
             //OG = 5
             case 5:
-                await user.SetSetting("bankLeftStyle", 0);
-                await user.SetSetting("bankRightStyle", 0);
-                await user.SetSetting("bankShowRed", 0);
-                await user.SetSetting("begRandom", 0);
-                await user.SetSetting("begColor", 65535);
-                await user.SetSetting("magikRandomColor", 1);
-                await user.SetSetting("uiColor", 65535);
+                await user.SetSetting("bankLeftStyle", 0, false);
+                await user.SetSetting("bankRightStyle", 0, false);
+                await user.SetSetting("bankShowRed", 0, false);
+                await user.SetSetting("begRandom", 0, false);
+                await user.SetSetting("begColor", 65535, false);
+                await user.SetSetting("magikRandomColor", 1, false);
+                await user.SetSetting("uiColor", 65535, false);
+                await user.SetSetting("begFailRed", 0, false);
+                await user.Save();
                 themeName = "OG Gembot";
                 break;
         }
@@ -1954,7 +1978,7 @@ public class GemBot
     private async Task<Tuple<string, Embed, MessageComponent>> FurnacesRaw(ulong userId, bool emoj)
     {
         User user = await GetUser(userId);
-        int craftSlots = await Tools.CharmEffect(["extra_craft_slots"], _items, user) + FurnaceConst;
+        int craftSlots = await Tools.CharmEffect(["FurnaceSlots"], _items, user) + FurnaceConst;
         await user.CheckFurnaces(craftSlots);
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle("Craft!")
@@ -2000,7 +2024,7 @@ public class GemBot
                 .WithCustomId($"craft-recipe|{recentRecipes[i]}|r"));
         }
         List<CraftingRecipe> craftableRecipes = _craftingRecipes.ToArray().ToList();
-        craftableRecipes.Sort((recipeA, recipeB) => (recipeA.AmountCraftable(user) - recipeB.AmountCraftable(user)));
+        craftableRecipes.Sort((recipeA, recipeB) => (recipeB.AmountCraftable(user) - recipeA.AmountCraftable(user)));
         for (int i = 0; i < 4 && i < craftableRecipes.Count; i++)
         {
             Item crafted = _items[craftableRecipes[i].ItemCrafted];
@@ -2021,6 +2045,140 @@ public class GemBot
     {
         Tuple<string, Embed, MessageComponent> furnaces = await FurnacesRaw(command.User.Id, Tools.ShowEmojis(command, Settings.BotID(), _client));
         await command.RespondAsync(furnaces.Item1, embed: furnaces.Item2, components: furnaces.Item3);
+    }
+    private async Task<Tuple<string, Embed, MessageComponent>> ShopRaw(ulong userID, bool emoj)
+    {
+        User user = await GetUser(userID);
+        EmbedBuilder embay = new EmbedBuilder()
+            .WithTitle("Drops")
+            .WithDescription("View all the currently active drops ||or the oldest 5 sets that haven't sold out, if there are more than that - the rest are locked to everybody||")
+            .WithColor(new Color((uint) await user.GetSetting("uiColor", 3287295)));
+        ComponentBuilder components = new ComponentBuilder();
+        foreach (Drop drop in _drops)
+        {
+            if (!drop.Published) continue;
+            if (drop.Out()) continue;
+            ActionRowBuilder row = new ActionRowBuilder();
+            for (int i = 0; i <= 4; i++)
+            {
+                if (drop.Left[i] == 0) continue;
+                Item item = _items[drop.Items[i]];
+                string currency = emoj ? _currency[drop.Price[i][1]] : _currencyNoEmoji[drop.Price[i][1]];
+                string fieldText = $"{drop.Descriptions[i].Replace("$iDescription", item.Description)}\n > *Only {drop.Left[i]} left*.\n > *Price*: {drop.Price[i][0]}{currency}";
+                if (!drop.Collectable) fieldText += "\n > **This item may be sold again or available in other parts of the bot.**";
+                embay.AddField(item.Name, fieldText);
+                IEmote emote;
+                if (Emote.TryParse(item.Emoji, out Emote parsedEmote))
+                {
+                    emote = parsedEmote;
+                }
+                else
+                {
+                    emote = Emoji.Parse(item.Emoji);
+                }
+                row.WithButton($"Buy for {drop.Price[i][0]} {_currencyNoEmojiNoFormatting[drop.Price[i][1]]}", $"drop-buy|{drop.DropID}|{i}|{emoj}", ButtonStyle.Secondary, emote: emote);
+            }
+            components.AddRow(row);
+            if (components.ActionRows.Count >= 5) break;
+        }
+        if (embay.Fields.Count == 0)
+        {
+            embay.WithTitle("Out of stock!")
+                .WithDescription("All the drops are out of stock.");
+        }
+        return new Tuple<string, Embed, MessageComponent>("Shop", embay.Build(), components.Build());
+    }
+    private async Task Shop(SocketSlashCommand command)
+    {
+        Task<Tuple<string, Embed, MessageComponent>> shopDetailsGetter = ShopRaw(command.User.Id, Tools.ShowEmojis(command, Settings.BotID(), _client));
+        Tuple<string, Embed, MessageComponent> shop = await shopDetailsGetter;
+        _ = command.RespondAsync(shop.Item1, embed: shop.Item2, components: shop.Item3);
+    }
+    private async Task Spin(SocketSlashCommand command)
+    {
+        int spinID = (int)(long)command.Data.Options.First().Value;
+        User user = await GetUser(command.User.Id);
+        EmbedBuilder embay = new EmbedBuilder().WithTitle("Spin Results:");
+        if (user.Inventory[spinID] <= 0)
+        {
+            await command.RespondAsync("You don't have the required item for this.", ephemeral: true);
+            return;
+        }
+        int roll = _rand.Next(100) + 1; //From 1 to 100
+        await user.GainItem(spinID, -1);
+        switch (roll)
+        {
+            case <= 30:
+                //Gain 4 of currency (30%)
+                embay.WithDescription($"You got 4{_currency[spinID]}");
+                embay.WithFooter("There is a 30% chance of this happening");
+                await user.Add(4, spinID);
+                await command.RespondAsync(embed: embay.Build());
+                break;
+            case <= 63:
+                //Gain 6 of currency (33%)
+                embay.WithDescription($"You got 6{_currency[spinID]}");
+                embay.WithFooter("There is a 33% chance of this happening");
+                await user.Add(6, spinID);
+                await command.RespondAsync(embed: embay.Build());
+                break;
+            case <= 89:
+                //Gain a charm (25%)
+                int charmID = Tools.GetCharm(_itemLists, spinID, 12, _rand);
+                await user.GainItem(charmID, 1);
+                embay.WithDescription($"You got 1{_items[charmID].Emoji}!");
+                embay.WithFooter("There is a 25% chance of this happening");
+                await command.RespondAsync(embed: embay.Build());
+                break;
+            case <= 92:
+                //Gain 9^rarity tickets (4%)
+                int ticketAmount = (int)Math.Pow(9, spinID);
+                await user.GainItem(21, ticketAmount);
+                embay.WithDescription($"You got {ticketAmount}{_items[21].Emoji}!");
+                embay.WithFooter("There is a 4% chance of this happening");
+                await command.RespondAsync(embed: embay.Build());
+                break;
+            case <= 95:
+                //Gain 100 of currency (3%)
+                embay.WithDescription($"You got 100{_currency[spinID]}");
+                embay.WithFooter("There is a 3% chance of this happening");
+                await user.Add(100, spinID);
+                await command.RespondAsync(embed: embay.Build());
+                break;
+            case <= 97:
+                //Gain 5 x current coin (2%)
+                await user.GainItem(spinID, 5);
+                embay.WithDescription($"You got 5{_items[spinID].Emoji}!");
+                embay.WithFooter("There is a 2% chance of this happening");
+                await command.RespondAsync(embed: embay.Build());
+                break;
+            case <= 99:
+                //Gain 1x key (2%)
+                await user.GainItem(spinID + 16, 1);
+                embay.WithDescription($"You got 1{_items[spinID + 16].Emoji}!");
+                embay.WithFooter("There is a 2% change of this happening");
+                await command.RespondAsync(embed: embay.Build());
+                break;
+            case >= 100:
+                //Gain next level coin (1%)
+                embay.WithFooter("There is a 1% chance of this happening");
+                //Amber has separate logic
+                if (spinID == 4)
+                {
+                    await user.GainItem(4, 5, false);
+                    await user.GainItem(3, 20, false);
+                    await user.GainItem(2, 150, false);
+                    await user.GainItem(1, 1000, false);
+                    await user.GainItem(0, 9999, false);
+                    embay.WithDescription($"You got 5{_items[4].Emoji} + 20{_items[3].Emoji} + 150{_items[2].Emoji} + 1000{_items[1].Emoji} + 9999{_items[0].Emoji}!");
+                    await command.RespondAsync(embed: embay.Build());
+                    break;
+                }
+                await user.GainItem(spinID + 1, 1);
+                embay.WithDescription($"You got 1{_items[spinID + 1].Emoji}!");
+                await command.RespondAsync(embed: embay.Build());
+                break;
+        }
     }
     
     
@@ -2163,8 +2321,8 @@ public class GemBot
             return;
 
         }
-        int x = 0;
-        int y = 0;
+        int x;
+        int y;
         try
         {
             x = int.Parse(temp[0]);
@@ -2183,7 +2341,7 @@ public class GemBot
             {
                 await user.SetData("mining", 0);
             }
-            string etl = "Calculating... (you should not see this)";
+            string etl;
             int secondsLeft = (block.Left ?? block.GetLeft())/(5+ await Tools.CharmEffect(["minePower"], _items, user));
             switch (secondsLeft)
             {
@@ -2204,7 +2362,7 @@ public class GemBot
                     secondsLeft -= hours * 3600;
                     int minutes = secondsLeft / 60;
                     secondsLeft -= minutes * 60;
-                    etl = $"{hours} hours, {minutes} minutes, and {secondsLeft} left";
+                    etl = $"{hours} hours, {minutes} minutes, and {secondsLeft} seconds left";
                     break;
                 }
                 case >= 60:
@@ -2230,8 +2388,7 @@ public class GemBot
             {
                 await Task.Delay(10 * secondsLeft);
                 user = await GetUser(component.User.Id);
-                block = _mineData.GetBlock(await user.GetData("miningAtX", x, false), await user.GetData("miningAtY", y, false)); 
-                etl = "Calculating... (you should not see this)";
+                block = _mineData.GetBlock(await user.GetData("miningAtX", x, false), await user.GetData("miningAtY", y, false));
                 secondsLeft = (block.Left ?? block.GetLeft())/(5+ await Tools.CharmEffect(["minePower"], _items, user));
                 switch (secondsLeft)
                 {
@@ -2345,7 +2502,7 @@ public class GemBot
                     case "fav":
                         List<int> faveRecipes = await user.User.GetListData("craft_favorites");
                         MessageComponent faveButtons = PageLogic(faveRecipes);
-                        await component.UpdateAsync((MessageProperties properties) =>
+                        await component.UpdateAsync((properties) =>
                         {
                             properties.Components = faveButtons;
                         });
@@ -2353,7 +2510,7 @@ public class GemBot
                     case "recent":
                         List<int> recentRecipes = await user.User.GetListData("craft_recents");
                         MessageComponent recentButtons = PageLogic(recentRecipes);
-                        await component.UpdateAsync((MessageProperties properties) =>
+                        await component.UpdateAsync((properties) =>
                         {
                             properties.Components = recentButtons;
                         });
@@ -2368,14 +2525,14 @@ public class GemBot
                                 profitRecipes.Add(i);
                             }
                         }
-                        profitRecipes.Sort((int a, int b) =>
+                        profitRecipes.Sort((a,b) =>
                         {
                             CraftingRecipe recipeA = _craftingRecipes[a];
                             CraftingRecipe recipeB = _craftingRecipes[b];
                             return recipeA.CompareRecipeProfit(recipeB, _items);
                         });
                         MessageComponent profitButtons = PageLogic(profitRecipes);
-                        await component.UpdateAsync((MessageProperties properties) =>
+                        await component.UpdateAsync((properties) =>
                         {
                             properties.Components = profitButtons;
                         });
@@ -2386,9 +2543,9 @@ public class GemBot
                         {
                             craftableRecipes.Add(i);
                         }
-                        craftableRecipes.Sort((a, b) => (_craftingRecipes[a].AmountCraftable(user) - _craftingRecipes[b].AmountCraftable(user)));
+                        craftableRecipes.Sort((a, b) => (_craftingRecipes[b].AmountCraftable(user) - _craftingRecipes[a].AmountCraftable(user)));
                         MessageComponent craftableButtons = PageLogic(craftableRecipes);
-                        await component.UpdateAsync((MessageProperties properties) =>
+                        await component.UpdateAsync((properties) =>
                         {
                             properties.Components = craftableButtons;
                         });
@@ -2447,6 +2604,9 @@ public class GemBot
                 }
                 CraftingRecipe recipeCrafted = _craftingRecipes[int.Parse(args[1])];
                 Item itemCrafted = _items[recipeCrafted.ItemCrafted];
+                List<int> recent = await user.User.GetListData("craft_recents");
+                recent.RemoveAll((i) => i == recipeCrafted.ID);
+                recent.Insert(0, recipeCrafted.ID);
                 await component.RespondAsync($"Successfully started crafting {int.Parse(args[2])*recipeCrafted.AmountCrafted}x{itemCrafted.Emoji}", ephemeral: true);
                 break;
             case "fav":
@@ -2541,7 +2701,7 @@ public class GemBot
             EmbedBuilder wrongIdEmbay = new EmbedBuilder()
                 .WithTitle("Old Work")
                 .WithDescription("This button is outdated.");
-            await component.UpdateAsync((properties) => { properties.Embed = wrongIdEmbay.Build(); });
+            await component.UpdateAsync((properties) => { properties.Embed = wrongIdEmbay.Build(); properties.Components = null; });
             return;
         }
         user.LastWork = 0;
@@ -2552,8 +2712,8 @@ public class GemBot
         {
             case "success":
                 await user.User.Add(amnt, 1, false);
-                string text = $"You gained {amnt} **Emeralds**.";
-                if (args[3] == "True")
+                string text = $"You gained {amnt} Emeralds.";
+                if (args[2] == "True")
                 {
                     text = $"You gained {amnt}{_currency[1]}!!!";
                 }
@@ -2574,12 +2734,14 @@ public class GemBot
                 });
                 break;
             case "failure":
+                Console.WriteLine(amnt);
                 amnt = _rand.Next(1, amnt);
+                Console.WriteLine(amnt);
                 await user.User.Add(amnt, 1, false);
-                string textFail = $"You gained {amnt} **Emeralds**.";
-                if (args[3] == "true")
+                string textFail = $"You gained {amnt} emeralds.";
+                if (args[2] == "True")
                 {
-                    text = $"You gained {amnt}{_currency[1]}!!!";
+                    textFail = $"You gained {amnt}{_currency[1]}!!!";
                 }
                 await user.User.Increase("commands",1, false);
                 await user.User.Increase("earned", amnt*10, false);
@@ -2600,13 +2762,58 @@ public class GemBot
                 throw new ButtonValueError();
         }
     }
+    private async Task DropButton(SocketMessageComponent component, string settings)
+    {
+        Task<CachedUser> userTask = GetUser(component.User.Id);
+        string[] args = settings.Split("|");
+        if (args.Length < 1) throw new ButtonValueError();
+        switch (args[0])
+        {
+            case "buy":
+                if (args.Length < 3) throw new ButtonValueError();
+                if (!int.TryParse(args[1], out int dropID)) throw new ButtonValueError();
+                if (!int.TryParse(args[2], out int slot)) throw new ButtonValueError();
+                Drop drop = _drops[dropID];
+                if (drop.Left[slot] <= 0)
+                {
+                    EmbedBuilder embayOutOfStock = new EmbedBuilder()
+                        .WithTitle("Out of stock")
+                        .WithDescription("This drop is now out of stock")
+                        .WithColor(new Color((uint) (await (await userTask).User.GetSetting("uiColor",3287295))));
+                    await component.RespondAsync(embed:embayOutOfStock.Build(), ephemeral: true);
+                    return;
+                }
+                int[] price = drop.Price[slot];
+                User user = await userTask;
+                if (user.Gems[price[1]] < price[0])
+                {
+                    EmbedBuilder embayTooExpensive = new EmbedBuilder()
+                        .WithTitle("You can't afford this")
+                        .WithDescription("You don't have enough gems for this drop")
+                        .WithColor(new Color((uint) (await user.GetSetting("uiColor", 3287295))));
+                    await component.RespondAsync(embed:embayTooExpensive.Build(), ephemeral: true);
+                    return;
+                }
+                drop.Left[slot]--;
+                await user.Add(-1 * price[0], price[1], false);
+                await user.GainItem(drop.Items[slot], 1);
+                await component.RespondAsync($"You have successfully purchased 1{_items[drop.Items[slot]].Emoji} for {price[0]}{_currency[price[1]]}", ephemeral: true);
+                break;
+            default:
+                throw new ButtonValueError();
+        }
+    }
     private Task ButtonHandlerSetup(SocketMessageComponent component)
     {
-        _ = Task.Run(() => Task.FromResult(ButtonHandler(component)));
+        _ = ButtonHandler(component);
         return Task.CompletedTask;
     }
     private async Task ButtonHandler(SocketMessageComponent component)
     {
+        if (!_running)
+        {
+            await component.RespondAsync("GemBOT is currently down. Please try again soon.", ephemeral: true);
+        }
         string[] realID = component.Data.CustomId.Split("-");
         try
         {
@@ -2627,6 +2834,9 @@ public class GemBot
                 case "work":
                     await WorkButton(component, realID[1]);
                     break;
+                case "drop" or "shop":
+                    await DropButton(component, realID[1]);
+                    break;
                 default:
                     await component.RespondAsync(
                         $"**Button type not found.**\n > `Button of id {realID[0]} and options {realID[1]} was not able to be executed because id {realID[0]} was not found.`",
@@ -2636,7 +2846,14 @@ public class GemBot
         }
         catch (ButtonValueError)
         {
-            await component.RespondAsync($"An internal error due to button definition prevented this button to be handled. \n > `Button of id {realID[0]} was found, but arguments {realID[1]} were not written correctly`\n**This usually happens when the button you clicked was old. Please run the command that gave you the button again and try again**", ephemeral: true);
+            await component.RespondAsync(
+                $"An internal error due to button definition prevented this button to be handled. \n > `Button of id {realID[0]} was found, but arguments {realID[1]} were not written correctly`\n**This usually happens when the button you clicked was old. Please run the command that gave you the button again and try again**",
+                ephemeral: true);
+        }
+        catch (UserNotFoundError)
+        {
+            await component.RespondAsync("Please run a grinding command (like /beg) to get started with gemBOT.",
+                ephemeral: true);
         }
         catch (Exception e)
         {
@@ -2653,7 +2870,7 @@ public class GemBot
     
     private Task TextMessageHandlerSetup(SocketMessage message)
     {
-        _ = Task.Run(() => Task.FromResult(TextMessageHandler(message)));
+        _ = TextMessageHandler(message);
         return Task.CompletedTask;
     }
     private async Task TextMessageHandler(SocketMessage socketMessage)
@@ -2732,6 +2949,15 @@ public class GemBot
                 case "edit_recipe":
                     await EditCraftingRecipe(socketMessage);
                     break;
+                case "add_drop":
+                    await CreateDrop(socketMessage);
+                    break;
+                case "publish_drop":
+                    await PublishDrop(socketMessage);
+                    break;
+                case "edit_drop":
+                    await EditDrop(socketMessage);
+                    break;
                 default:
                     await socketMessage.Channel.SendMessageAsync("This command was not found");
                     break;
@@ -2753,15 +2979,15 @@ public class GemBot
     {
         await message.Channel.SendMessageAsync("Deleting old commands (1/6)...");
         await _client.SetGameAsync("resting commands...");
-        string[] names = ["item", "balance", "beg", "stats", "inventory", "work", "magik", "hep", "start", "bank", "theme", "setting", "quests", "give", "mine", "play", "help", "craft"];
+        string[] names = ["item", "balance", "beg", "stats", "inventory", "work", "magik", "hep", "start", "bank",
+            "theme", "setting", "quests", "give", "mine", "play", "help", "craft", "shop", "spin"];
         List<string> existingCommands = new List<string>();
         string[] forceUpdateCommands = message.Content.Split(" ")[1..];
         bool forceUpdateAll = forceUpdateCommands.Contains("all");
-        Console.WriteLine(forceUpdateAll);
         IReadOnlyCollection<RestGlobalCommand>? commands = await  _client.Rest.GetGlobalApplicationCommands();
         foreach (RestGlobalCommand command in commands)
         {
-            if (names.Contains(command.Name)) continue;
+            if (names.Contains(command.Name)) {existingCommands.Add(command.Name); continue; }
             Console.WriteLine($"Command {command.Name} deleted!");
             await command.DeleteAsync();
         }
@@ -3090,6 +3316,25 @@ public class GemBot
             .WithName("craft")
             .WithDescription("Craft items from other items")
             .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall]);
+        SlashCommandBuilder shop = new SlashCommandBuilder()
+            .WithName("shop")
+            .WithDescription("View and buy from the global shop.")
+            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall]);
+        SlashCommandBuilder spin = new SlashCommandBuilder()
+            .WithName("spin")
+            .WithDescription("Spin a wheel for rewards.")
+            .WithIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithType(ApplicationCommandOptionType.Integer)
+                .WithName("wheel")
+                .WithDescription("Which wheel would you like to spin?")
+                .AddChoice("Diamond", 0)
+                .AddChoice("Emerald", 1)
+                .AddChoice("Sapphire", 2)
+                .AddChoice("Ruby", 3)
+                .AddChoice("Amber", 4)
+                .WithRequired(true)
+            );
         try
         {
             await message.Channel.SendMessageAsync("Pushing grinding commands (3/6)...");
@@ -3116,6 +3361,10 @@ public class GemBot
                 await _client.CreateGlobalApplicationCommandAsync(bank.Build());
             if (forceUpdateAll || forceUpdateCommands.Contains("craft") || !existingCommands.Contains("craft"))
                 await _client.CreateGlobalApplicationCommandAsync(craft.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("shop") || !existingCommands.Contains("shop"))
+                await _client.CreateGlobalApplicationCommandAsync(shop.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("spin") || !existingCommands.Contains("spin"))
+                await _client.CreateGlobalApplicationCommandAsync(spin.Build());
             await message.Channel.SendMessageAsync("Pushing info commands (5/6)...");
             if (forceUpdateAll || forceUpdateCommands.Contains("item") || !existingCommands.Contains("item")) 
                 await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
@@ -3677,11 +3926,17 @@ public class GemBot
             .AddField("$add_quest", " > **Params**: <rarity>\n> **Description**: Create a new quest of rarity rarity")
             .AddField("$quest", " > **Params**: <rarity> <questID> <property> <value>\n **Description**: Set Quest <rarity> <questId>'s <property> to <value>")
             .Build();
-        await message.Channel.SendMessageAsync("View Embeds for details!", embeds:[embay1, embay2, embay3, embay4, embay0]);
+        Embed embay5 = new EmbedBuilder()
+            .WithTitle("Drops")
+            .WithDescription("Commands that modify, add, or delete drops.")
+            .AddField("$add_drop", " > **Params**: *none*\n > **Description**: Create a new drop.")
+            .AddField("$publish_drop", " > **Params**: *none*\n > **Description**: Publish the last drop.")
+            .AddField("$edit_drop", " > **Params**: <property> <value>\n > **Description**: Change the last drop's <property> to <value>")
+            .Build();
+        await message.Channel.SendMessageAsync("View Embeds for details!", embeds:[embay1, embay2, embay3, embay4, embay5, embay0]);
     }
     private async Task CreateCraftingRecipe(SocketMessage message)
     {
-        string[] args = message.ToString().Split(" ");
         int id = _craftingRecipes.Count;
         _craftingRecipes.Add(new CraftingRecipe(){ID = id});
         RestUserMessage msg = await message.Channel.SendMessageAsync($"Created new crafting recipe with id {id}");
@@ -3739,7 +3994,7 @@ public class GemBot
                         recipe.Requirements.RemoveAt(recipe.Requirements.Count - 1);
                         break;
                     default:
-                        int requirementID = 0;
+                        int requirementID;
                         try
                         {
                             requirementID = int.Parse(args[3]);
@@ -3845,38 +4100,298 @@ public class GemBot
         }
         await message.Channel.SendMessageAsync(recipe.ToString(_items));
     }
+    private async Task CreateDrop(SocketMessage message)
+    {
+        if (_drops.Count > 0 && !_drops[^1].Published)
+        {
+            RestUserMessage msg = await message.Channel.SendMessageAsync(
+                "You already have an unpublished drop. Please edit that one and then publish before making another one.");
+            await Task.Delay(5000);
+            await msg.DeleteAsync();
+            return;
+        }
+        _drops.Add(new Drop { DropID = _drops.Count });
+        EmbedBuilder embay = new EmbedBuilder()
+            .WithTitle($"Drop {_drops.Count - 1}")
+            .WithDescription(_drops[^1].ToString(_items));
+        await message.Channel.SendMessageAsync("Created new drop!", embed:embay.Build());
+    }
+    private async Task PublishDrop(SocketMessage message)
+    {
+        if (_drops[^1].Published)
+        {
+            RestUserMessage msg =
+                await message.Channel.SendMessageAsync(
+                    "You have already published the last drop. Please use $add_drop to add a drop.");
+            await Task.Delay(5000);
+            await msg.DeleteAsync();
+            return;
+        }
+        _drops[^1].Published = true;
+        await _drops[^1].Save();
+    }
+    private async Task EditDrop(SocketMessage message)
+    {
+        if (_drops[^1].Published)
+        {
+            RestUserMessage msg =
+                await message.Channel.SendMessageAsync("The last drop is already published. You cannot edit it.");
+            await Task.Delay(5000);
+            await msg.DeleteAsync();
+            return;
+        }
+        string[] args = message.Content.Split(" ");
+        if (args.Length < 3)
+        {
+            RestUserMessage msg = await message.Channel.SendMessageAsync("Usage of this command is: $edit_drop <property> <value>");
+            await Task.Delay(5000);
+            await msg.DeleteAsync();
+            return;
+        }
+        switch (args[1])
+        {
+            case "name":
+                string name = string.Join(' ', args[2..]);
+                _drops[^1].Name = name;
+                break;
+            case "item":
+                if (args.Length < 4)
+                {
+                    RestUserMessage msgItem =
+                        await message.Channel.SendMessageAsync("Usage of this command is: $edit_drop item <dropSpot> <itemID>");
+                    await Task.Delay(5000);
+                    await msgItem.DeleteAsync();
+                    return;
+                }
+                int dropSlotItem = int.Parse(args[2]);
+                int itemID = int.Parse(args[3]);
+                if (dropSlotItem >= 5)
+                {
+                    RestUserMessage msgItemSlotMissing =
+                        await message.Channel.SendMessageAsync(
+                            $"Argument #2 - dropSlot ({dropSlotItem}) must be between 0 and 4 (inclusive)");
+                    await Task.Delay(5000);
+                    await msgItemSlotMissing.DeleteAsync();
+                    return;
+                }
+                if (itemID >= _items.Count)
+                {
+                    RestUserMessage msgItemIdTooLarge = await message.Channel.SendMessageAsync($"Argument #3 - itemID ({itemID}) must be between 0 and {_items.Count-1} (inclusive)");
+                    await Task.Delay(5000);
+                    await msgItemIdTooLarge.DeleteAsync();
+                    return;
+                }
+                _drops[^1].Items[dropSlotItem] = itemID;
+                break;
+            case "items":
+                if (args.Length < 7)
+                {
+                    RestUserMessage msgItemsNotEnough =
+                            await message.Channel.SendMessageAsync("Usage of this command is: $edit_drop items <item1> <item2> <item3> <item4> <item5>");
+                    await Task.Delay(5000);
+                    await msgItemsNotEnough.DeleteAsync();
+                    return;
+                }
+                try
+                {
+                    int item1 = int.Parse(args[2]);
+                    int item2 = int.Parse(args[3]);
+                    int item3 = int.Parse(args[4]);
+                    int item4 = int.Parse(args[5]);
+                    int item5 = int.Parse(args[6]);
+                    _drops[^1].Items = [item1, item2, item3, item4, item5];
+                }
+                catch (FormatException)
+                {
+                    RestUserMessage msgItemsFormatException = await message.Channel.SendMessageAsync(
+                            $"Parameters <item1> through <item5> (#2-#6) must be integers.");
+                    await Task.Delay(5000);
+                    await msgItemsFormatException.DeleteAsync();
+                    return;
+                }
+                break;
+            case "left":
+                if (args.Length < 4)
+                {
+                    RestUserMessage msgLeft =
+                        await message.Channel.SendMessageAsync("Usage of this command is: $edit_drop left <dropSpot> <itemID>");
+                    await Task.Delay(5000);
+                    await msgLeft.DeleteAsync();
+                    return;
+                }
+                int dropSlotLeft = int.Parse(args[2]);
+                int amount = int.Parse(args[3]);
+                if (dropSlotLeft >= 5)
+                {
+                    RestUserMessage msgItemSlotMissing =
+                        await message.Channel.SendMessageAsync(
+                            $"Argument #2 - dropSlot ({dropSlotLeft}) must be between 0 and 4 (inclusive)");
+                    await Task.Delay(5000);
+                    await msgItemSlotMissing.DeleteAsync();
+                    return;
+                }
+                _drops[^1].Items[dropSlotLeft] = amount;
+                break;
+            case "amounts":
+                if (args.Length < 7)
+                {
+                    RestUserMessage msgItemsNotEnough =
+                            await message.Channel.SendMessageAsync("Usage of this command is: $edit_drop amounts <amount1> <amount2> <amount3> <amount4> <amount5>");
+                    await Task.Delay(5000);
+                    await msgItemsNotEnough.DeleteAsync();
+                    return;
+                }
+                try
+                {
+                    int amount1 = int.Parse(args[2]);
+                    int amount2 = int.Parse(args[3]);
+                    int amount3 = int.Parse(args[4]);
+                    int amount4 = int.Parse(args[5]);
+                    int amount5 = int.Parse(args[6]);
+                    _drops[^1].Left = [amount1, amount2, amount3, amount4, amount5];
+                }
+                catch (FormatException)
+                {
+                    RestUserMessage msgAmountFormatException = await message.Channel.SendMessageAsync(
+                            $"Parameters <amount1> through <amount5> (#2-#6) must be integers.");
+                    await Task.Delay(5000);
+                    await msgAmountFormatException.DeleteAsync();
+                    return;
+                }
+                break;
+            case "price":
+                if (args.Length < 5)
+                {
+                    RestUserMessage msgLeft =
+                        await message.Channel.SendMessageAsync("Usage of this command is: $edit_drop price <dropSpot> <amount> <currency>");
+                    await Task.Delay(5000);
+                    await msgLeft.DeleteAsync();
+                    return;
+                }
+                int dropSlotPrice = int.Parse(args[2]);
+                int amountMoney = int.Parse(args[3]);
+                int currency = int.Parse(args[4]);
+                if (dropSlotPrice >= 5)
+                {
+                    RestUserMessage msgPriceSlotMissing =
+                        await message.Channel.SendMessageAsync(
+                            $"Argument #2 - dropSlot ({dropSlotPrice}) must be between 0 and 4 (inclusive)");
+                    await Task.Delay(5000);
+                    await msgPriceSlotMissing.DeleteAsync();
+                    return;
+                }
+                if (currency >= 5)
+                {
+                    RestUserMessage msgPriceCurrencyOutOfRange =
+                        await message.Channel.SendMessageAsync(
+                            $"Argument #4 - currency ({currency}) must be between 0 and 4 (inclusive)");
+                    await Task.Delay(5000);
+                    await msgPriceCurrencyOutOfRange.DeleteAsync();
+                    return;
+                }
+                _drops[^1].Price[dropSlotPrice] = [amountMoney, currency];
+                break;
+            case "prices":
+                try
+                {
+                    int amountPrices = int.Parse(args[2]);
+                    _drops[^1].Price = [[amountPrices, 0],[amountPrices, 1],[amountPrices, 2],[amountPrices, 3],[amountPrices, 4]];
+                }
+                catch (FormatException)
+                {
+                    RestUserMessage msgPricesFormatException = await message.Channel.SendMessageAsync(
+                            $"Parameter <amount> (#2) must be an integer.");
+                    await Task.Delay(5000);
+                    await msgPricesFormatException.DeleteAsync();
+                    return;
+                }
+                break;
+            case "description":
+                if (args.Length < 4)
+                {
+                    RestUserMessage msgDescriptionTooLittleArgs = await message.Channel.SendMessageAsync(
+                        "Usage of this command is: $edit_drop description <id> <value>");
+                    await Task.Delay(5000);
+                    await msgDescriptionTooLittleArgs.DeleteAsync();
+                    return;
+                }
 
+                if (!int.TryParse(args[2], out int dropSlot))
+                {
+                    RestUserMessage msg = await message.Channel.SendMessageAsync(
+                        $"Argument #2 must be an integer. You entered: {args[2]}");
+                    await Task.Delay(5000);
+                    await msg.DeleteAsync();
+                    return;
+                }
+                string description = string.Join(' ', args[3..]);
+                _drops[^1].Descriptions[dropSlot] = description;
+                break;
+            case "collectable":
+                switch (args[2].ToLower())
+                {
+                    case "yes":
+                        _drops[^1].Collectable = true;
+                        break;
+                    case "no":
+                        _drops[^1].Collectable = false;
+                        break;
+                    default:
+                        RestUserMessage msgCollectable = await message.Channel.SendMessageAsync(
+                            $"For argument #2 (vale) you specified {args[2]}, which was invalid." +
+                            $" \n > The valid arguments are \"yes\" and \"no\".");
+                        await Task.Delay(5000);
+                        await msgCollectable.DeleteAsync();
+                        return;
+                }
+                break;
+            default:
+                RestUserMessage defaultMsg = await message.Channel.SendMessageAsync(
+                    $"For argument #1 (property) you specified {args[1]}, which was invalid." +
+                    $" \n > The valid arguments are \"name\", \"item\", \"items\", \"left\", \"amounts\", \"price\", \"prices\", and \"description\".");
+                await Task.Delay(5000);
+                await defaultMsg.DeleteAsync();
+                return;
+        }
+        await message.Channel.SendMessageAsync(_drops[^1].ToString(_items));
+    }
 
+    // ReSharper disable once FunctionNeverReturns
     private async Task RunTicks()
     {
         Console.WriteLine("Starting ticking...");
         Stopwatch stopwatch = new Stopwatch();
         stopwatch.Start();
         uint taskTimes = 0;
+        List<Task> tasks = new List<Task>();
         while (true)
         {
             Console.WriteLine($"Tick {taskTimes}...");
             if (true) //every tick
             {
-                _ = Task.Run(() => Task.FromResult(MineTick()));
-                _ = Task.Run(() => Task.FromResult(CraftTick()));
+                tasks.Add(MineTick());
+                tasks.Add(CraftTick());
             }
             if (taskTimes % 60 == 0) //every minute
             {
-                _ = Task.Run(() => Task.FromResult(_mineData.SaveMineData()));
+                tasks.Add(_mineData.SaveMineData());
+                tasks.Add(SaveDropsTick());
             }
             if (taskTimes % 120 == 0) //Every two minutes
             {
-                _ = Task.Run(() => Task.FromResult(RemoveInactiveUsersTick()));
+                tasks.Add(RemoveInactiveUsersTick());
             }
             if (taskTimes % 60 * 60 == 0) //every hour
             {
                 if (DateTime.Today.Month.ToString() != _mineData.MonthName)
                 {
-                    await Task.Delay(100);
+                    await Task.WhenAll(tasks);
                     _mineData = await MineData.LoadMineData();
                 }
             }
+            
+            await Task.WhenAll(tasks);
+            tasks = new List<Task>();
             taskTimes++;
             await Task.Delay(1000 - (int)stopwatch.ElapsedMilliseconds);
             stopwatch.Restart();
@@ -4018,6 +4533,13 @@ public class GemBot
                    furnace.UpdateFromCraftingRecipe(recipe);
                }
            }
+        }
+    }
+    private async Task SaveDropsTick()
+    {
+        foreach (Drop drop in _drops)
+        {
+            await drop.Save();
         }
     }
 }

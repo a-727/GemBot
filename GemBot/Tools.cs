@@ -139,9 +139,9 @@ public static class Tools
     {
         Random random = randomParam ?? new Random();
         string[] rarityToList = rarityToListParam ?? ["CommonCharms", "UncommonCharms", "RareCharms", "EpicCharms", "LegendaryCharms"];
-        if (random.Next(0, upgradeDiff + 1) == upgradeDiff && startingRarity < 4)
+        if (random.Next(0, upgradeDiff) == upgradeDiff -1 && startingRarity < 4)
         {
-            return GetCharm(itemLists, startingRarity + 1, upgradeDiff);
+            return GetCharm(itemLists, startingRarity + 1, upgradeDiff, random, rarityToList);
         }
         List<int> itemChoice = itemLists[rarityToList[startingRarity]];
         return itemChoice[random.Next(itemChoice.Count)];
@@ -181,7 +181,6 @@ public static class Tools
         }
         return false; //Since every other case has returned, the bot is in a server where it doesn't have permissions to use emojis. So, let's return that.
     }
-    
     public static string IDString(int id, string directory = "Data/Items")
     {
         return id switch

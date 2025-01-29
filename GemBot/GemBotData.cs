@@ -27,11 +27,59 @@ public class Item(int id = 999)
 
 public class Drop
 {
+    public bool Published = false;
+    public bool Collectable = true;
+    public int DropID = 0;
     public string Name { get; set; } = "Example Drop";
-    public int[] Items { get; set; } = [11, 12, 13, 14, 15];
+    public int[] Items { get; set; } = [0, 1, 2, 3, 4];
     public int[] Left { get; set; } = [50000, 10000, 2000, 400, 80];
     public int[][] Price { get; set; } = [[6,0], [6,1], [6,2], [6,3], [6,4]];
     public string[] Descriptions { get; set; } = ["$iDescription", "$iDescription", "$iDescription", "$iDescription", "$iDescription"];
+
+    public async Task Save()
+    {
+        await File.WriteAllTextAsync($"Data/Drops/{DropID}.json", JsonConvert.SerializeObject(this));
+    }
+    public bool Out()
+    {
+        return Left[0] <= 0 && Left[1] <= 0 && Left[2] <= 0 && Left[3] <= 0 && Left[4] <= 0;
+    }
+    public override string ToString()
+    {
+        return $"""
+                **{Name}** (Drop)
+                **Collectable**: {Collectable}
+                **Items:**
+                > {Left[0]} of {Items[0]} for {Price[0][0]} {Price[0][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[0]}`
+                > {Left[1]} of {Items[1]} for {Price[1][0]} {Price[1][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[1]}`
+                > {Left[2]} of {Items[2]} for {Price[2][0]} {Price[2][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[2]}`
+                > {Left[3]} of {Items[3]} for {Price[3][0]} {Price[3][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[3]}`
+                > {Left[4]} of {Items[4]} for {Price[4][0]} {Price[4][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[4]}`
+                """;
+    }
+    public string ToString(List<Item> items)
+    {
+        return $"""
+                **{Name}** (Drop)
+                **Collectable**: {Collectable}
+                **Items:**
+                > {Left[0]} of {items[Items[0]].Name} for {Price[0][0]} {Price[0][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[0]}`
+                > {Left[1]} of {items[Items[1]].Name} for {Price[1][0]} {Price[1][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[1]}`
+                > {Left[2]} of {items[Items[2]].Name} for {Price[2][0]} {Price[2][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[2]}`
+                > {Left[3]} of {items[Items[3]].Name} for {Price[3][0]} {Price[3][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[3]}`
+                > {Left[4]} of {items[Items[4]].Name} for {Price[4][0]} {Price[4][1] switch {0 => "diamonds", 1 => "emeralds", 2=> "sapphires", 3 => "rubies", 4 => "ambers", _ => "error"}}
+                >  -- `{Descriptions[4]}`
+                """;
+    }
 }
 
 public class User
@@ -238,8 +286,15 @@ public class User
         if (extraFurnaces == 0) return;
         while (extraFurnaces > 0)
         {
-            if (Furnaces.Remove(Furnaces.First(furnace => furnace.Crafting == false))) extraFurnaces--;
-            else break;
+            try
+            {
+                if (Furnaces.Remove(Furnaces.First(furnace => furnace.Crafting == false))) extraFurnaces--;
+                else break;
+            }
+            catch (InvalidOperationException)
+            {
+                break;
+            }
         }
     }
     public async Task Save(ulong id = default)

@@ -13,7 +13,9 @@
 
     <ItemGroup>
       <Folder Include="Data\CraftingRecipes\" />
+      <Folder Include="Data\Drops\" />
       <Folder Include="Data\Mine\Chunks\" />
+      <Folder Include="Data\OldUsers\" />
     </ItemGroup>
 
 </Project>
