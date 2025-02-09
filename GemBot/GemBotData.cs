@@ -33,7 +33,7 @@ public class Drop
     public string Name { get; set; } = "Example Drop";
     public int[] Items { get; set; } = [0, 1, 2, 3, 4];
     public int[] Left { get; set; } = [50000, 10000, 2000, 400, 80];
-    public int[][] Price { get; set; } = [[6,0], [6,1], [6,2], [6,3], [6,4]];
+    public int[][] Price { get; set; } = [[7,0], [7,1], [7,2], [7,3], [7,4]];
     public string[] Descriptions { get; set; } = ["$iDescription", "$iDescription", "$iDescription", "$iDescription", "$iDescription"];
 
     public async Task Save()
@@ -96,7 +96,7 @@ public class User
     public Dictionary<string, List<int>> DataLists { get; set; } = [];
     public List<CraftingRecipe.Furnace> Furnaces { get; set; } = [new()];
     public ulong ID { get; set; }
-    public async Task<int> ItemAmount(int id)
+    public int ItemAmount(int id)
     {
         try
         {
@@ -108,7 +108,6 @@ public class User
             {
                 Inventory.Add(0);
             }
-            await Save();
             return 0;
         }
         catch (ArgumentOutOfRangeException)
@@ -117,15 +116,13 @@ public class User
             {
                 Inventory.Add(0);
             }
-            await Save();
             return 0;
         }
     }
-    public async Task GainItem(int id, int amount, bool save = true)
+    public void GainItem(int id, int amount)
     {
-        int existing = await ItemAmount(id);
+        int existing = ItemAmount(id);
         Inventory[id] = existing + amount;
-        if (save) { await Save(); }
     }
     public async Task<bool> OnCoolDown(string about, ulong currentTime, uint timeoutFor, bool updateCooldown = true)
     {
@@ -152,10 +149,9 @@ public class User
             return false;
         }
     }
-    public async Task Add(int amount, int value, bool save = true)
+    public void Add(int amount, int value)
     {
         Gems[value] += amount;
-        if (save) { await Save(); }
     }
     public void UpdateDay(uint day)
     {
@@ -198,14 +194,12 @@ public class User
             Stats[stat] = (ulong) amount;
         }
     }
-    public async Task Increase(string stat, int amount, bool save = true)
+    public void Increase(string stat, int amount)
     {
         IncreaseStat(stat, amount);
         Complete(stat, amount);
-        if (save) { await Save(); }
-        
     }
-    public UInt128 GetStat(string stat)
+    public ulong GetStat(string stat)
     {
         try
         {
@@ -217,7 +211,7 @@ public class User
             return Stats[stat];
         }
     }
-    public async Task<ulong> GetSetting(string setting, ulong defaultValue, bool save = true)
+    public ulong GetSetting(string setting, ulong defaultValue)
     {
         try
         {
@@ -226,16 +220,14 @@ public class User
         catch
         {
             Settings[setting] = defaultValue;
-            if (save) await Save();
             return defaultValue;
         }
     }
-    public async Task SetSetting(string setting, ulong value, bool save = true)
+    public void SetSetting(string setting, ulong value)
     {
         Settings[setting] = value;
-        if (save) await Save();
     }
-    public async Task<int> GetData(string data, int defaultValue, bool save = true)
+    public int GetData(string data, int defaultValue)
     {
         try
         {
@@ -244,16 +236,14 @@ public class User
         catch
         {
             UniqueData[data] = defaultValue;
-            if (save) await Save();
             return defaultValue;
         }
     }
-    public async Task SetData(string data, int value, bool save = true)
+    public void SetData(string data, int value)
     {
         UniqueData[data] = value;
-        if (save) await Save();
     }
-    public async Task<List<int>> GetListData(string data, List<int> defaultValue, bool save = true)
+    public List<int> GetListData(string data, List<int> defaultValue)
     {
         try
         {
@@ -262,20 +252,18 @@ public class User
         catch
         {
             DataLists[data] = defaultValue;
-            if (save) await Save();
             return defaultValue;
         }
     }
-    public async Task<List<int>> GetListData(string data, bool save = true)
+    public List<int> GetListData(string data)
     {
-        return await GetListData(data, [], save);
+        return GetListData(data, []);
     }
-    public async Task SetListData(string data, List<int> value, bool save = true)
+    public void SetListData(string data, List<int> value)
     {
         DataLists[data] = value;
-        if (save) await Save();
     }
-    public async Task CheckFurnaces(int furnaceCount)
+    public void CheckFurnaces(int furnaceCount)
     {
         int extraFurnaces = Furnaces.Count - furnaceCount;
         while (extraFurnaces < 0)
@@ -355,6 +343,8 @@ public class CachedUser (User user, ulong time)
     public List<Tuple<int, int>>? NextCrafting = null;
     public ulong InactiveSince = time;
     public byte LastWork = 0;
+    public List<string> Notifications = [];
+    public byte NotificationsID = 0;
     public static implicit operator User (CachedUser x)
     {
         return x.User;
@@ -368,7 +358,8 @@ public class CraftingRecipe
     public int AmountCrafted = 1;
     public List<RecipeRequirements> Requirements = [];
     public uint TimeRequired = 3600; //in seconds
-
+    public int Price = 1;
+    public int PriceValue = 0;
     public async Task Save(int id = -1)
     {
         if (id == -1)
@@ -379,9 +370,49 @@ public class CraftingRecipe
     }
     public override string ToString()
     {
+        int secondsLeft = (int)TimeRequired;
+        string etl;
+        switch (secondsLeft)
+        {
+            case > 86400:
+            {
+                int days = secondsLeft / 86400;
+                secondsLeft -= days * 86400;
+                int hours = secondsLeft / 3600;
+                secondsLeft -= hours * 3600;
+                int minutes = secondsLeft / 60;
+                secondsLeft -= minutes * 60;
+                etl = $"{days} days, {hours} hr, {minutes} min, {secondsLeft} sec";
+                break;
+            }
+            case > 3600:
+            {
+                int hours = secondsLeft / 3600;
+                secondsLeft -= hours * 3600;
+                int minutes = secondsLeft / 60;
+                secondsLeft -= minutes * 60;
+                etl = $"{hours} hr, {minutes} min, and {secondsLeft} sec";
+                break;
+            }
+            case >= 60:
+            {
+                int minutes = secondsLeft / 60;
+                secondsLeft -= minutes * 60;
+                string secondsProgress = secondsLeft < 10 ? '0' + secondsLeft.ToString() : secondsLeft.ToString();
+                etl = $"{minutes}:{secondsProgress} (min:sec)";
+                break;
+            }
+            case >= 1:
+                etl = $"{secondsLeft} seconds";
+                break;
+            default:
+                etl = "Almost none!";
+                break;
+        }
         string toReturn = $"**Crafting Recipe {ID}**"
+                + (Price > 0 ? $"\n > Price: {Price} {PriceValue switch {0 => "diamonds", 1 => "emeralds", 2 => "sapphires", 3 => "rubies", 4 => "ambers", _ => "**error errors**"}}" : "")
                 + $"\n > Crafts {AmountCrafted} copies of Item **{ItemCrafted}**"
-                + $"\n > Takes {TimeRequired} seconds"
+                + $"\n > Time: {etl}"
                 + $"\n > Requirements:";
         foreach (RecipeRequirements req in Requirements)
         {
@@ -389,12 +420,52 @@ public class CraftingRecipe
         }
         return toReturn;
     }
-    public string ToString(List<Item> items)
+    public string ToString(List<Item> items, string[] currency)
     {
+        int secondsLeft = (int)TimeRequired;
+        string etl;
+        switch (secondsLeft)
+        {
+            case > 86400:
+            {
+                int days = secondsLeft / 86400;
+                secondsLeft -= days * 86400;
+                int hours = secondsLeft / 3600;
+                secondsLeft -= hours * 3600;
+                int minutes = secondsLeft / 60;
+                secondsLeft -= minutes * 60;
+                etl = $"{days} days, {hours} hr, {minutes} min, {secondsLeft} sec";
+                break;
+            }
+            case > 3600:
+            {
+                int hours = secondsLeft / 3600;
+                secondsLeft -= hours * 3600;
+                int minutes = secondsLeft / 60;
+                secondsLeft -= minutes * 60;
+                etl = $"{hours} hr, {minutes} min, and {secondsLeft} sec";
+                break;
+            }
+            case >= 60:
+            {
+                int minutes = secondsLeft / 60;
+                secondsLeft -= minutes * 60;
+                string secondsProgress = secondsLeft < 10 ? '0' + secondsLeft.ToString() : secondsLeft.ToString();
+                etl = $"{minutes}:{secondsProgress} (min:sec)";
+                break;
+            }
+            case >= 1:
+                etl = $"{secondsLeft} seconds";
+                break;
+            default:
+                etl = "Almost none!";
+                break;
+        }
         Item itemCrafted = items[ItemCrafted];
         string toReturn = $"**Crafting Recipe {ID}**"
+                + (Price > 0 ? $"\n > Price: {Price}{currency[PriceValue]}" : "")
                 + $"\n > Crafts {AmountCrafted} copies of **{itemCrafted.Name}** (Item {ItemCrafted})"
-                + $"\n > Takes {TimeRequired} seconds"
+                + $"\n > Time: {etl}"
                 + $"\n > Requirements:";
         foreach (RecipeRequirements req in Requirements)
         {
@@ -405,7 +476,7 @@ public class CraftingRecipe
     }
     public int AmountCraftable(User user)
     {
-        int toReturn = int.MaxValue;
+        int toReturn = Price > 0 ? user.Gems[PriceValue] / Price : int.MaxValue;
         foreach (RecipeRequirements req in Requirements)
         {
             int thisMax = user.Inventory[req.Item] / req.Amount;
@@ -414,14 +485,12 @@ public class CraftingRecipe
                 toReturn = thisMax;
             }
         }
-
         return toReturn;
     }
-
     public int CompareRecipeProfit(CraftingRecipe with, List<Item> items)
     {
-        int thisProfit = 0;
-        int thatProfit = 0;
+        int thisProfit = -1 * Price * (int)Math.Pow(10, PriceValue);
+        int thatProfit = -1 * with.Price * (int)Math.Pow(10, with.PriceValue);
         foreach (RecipeRequirements requirement in Requirements)
         {
             thisProfit -= requirement.Amount * items[requirement.Item].Value;
@@ -434,6 +503,7 @@ public class CraftingRecipe
         thatProfit += with.AmountCrafted * items[with.ItemCrafted].Value;
         return thisProfit - thatProfit;
     }
+    
     public class RecipeRequirements
     {
         public int Item { get; set; } = 39; //stone coin.

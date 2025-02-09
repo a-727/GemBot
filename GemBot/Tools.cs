@@ -119,13 +119,13 @@ public static class Tools
         await File.WriteAllTextAsync($"Data/Users/{id}",JsonConvert.SerializeObject(user));
         return user;
     }
-    public static async Task<int> CharmEffect(string[] effects, List<Item> items, User user)
+    public static int CharmEffect(string[] effects, List<Item> items, User user)
     {
         int toReturn = 0;
         for (int i = 0; i < items.Count; i++)
         {
             Item item = items[i];
-            bool has = await user.ItemAmount(i) > 0;
+            bool has = user.ItemAmount(i) > 0;
             if (!has) continue;
             foreach (Charm charm in item.Charms)
             {
@@ -191,6 +191,10 @@ public static class Tools
             >= 0 => $"{directory}/00{id}.json",
             _ => throw new InvalidArgumentException()
         };
+    }
+    public static bool VerifyOriginalUse(SocketMessageComponent component) //ONLY WORKS IF COMPONENT IS IN INCLUDED IN AN INTERACTION
+    {
+        return component.User.Id == component.Message.Interaction.User.Id;
     }
     public class ItemAutocompleteHandler : AutocompleteHandler
     {

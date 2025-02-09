@@ -5,6 +5,7 @@
         <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <PublishSingleFile>true</PublishSingleFile>
     </PropertyGroup>
 
     <ItemGroup>
@@ -16,6 +17,9 @@
       <Folder Include="Data\Drops\" />
       <Folder Include="Data\Mine\Chunks\" />
       <Folder Include="Data\OldUsers\" />
+      <Folder Include="Data\Users\" />
+      <Folder Include="UnitTests\Code\" />
+      <Folder Include="UnitTests\Data\" />
     </ItemGroup>
 
 </Project>

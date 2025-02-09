@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.SymbolStore;
 using Discord;
 using Discord.Net;
 using Discord.Rest;
@@ -7,10 +8,7 @@ using Newtonsoft.Json;
 
 namespace GemBot;
 
-public class NoTokenError : Exception
-{
-    
-}
+public class NoTokenError : Exception { }
 public class UserNotFoundError() : Exception("The user was not found"){}
 public class InvalidArgumentException: Exception{}
 
@@ -55,6 +53,7 @@ public class GemBot
     private MineData _mineData = null!;
     private List<CraftingRecipe> _craftingRecipes = [];
     private List<Drop> _drops = [];
+    private DailyTokenShop _tokenShop = null!;
     public async Task Main()
     {
         _client.Log += Log;
@@ -72,6 +71,7 @@ public class GemBot
         }
         await GetItems();
         _mineData = await MineData.LoadMineData();
+        _tokenShop = DailyTokenShop.Generate(_itemLists["CharmSets"], Tools.CurrentDay(), _rand);
         _ = Task.Run(() => Task.FromResult(RunTicks()));
         await _client.LoginAsync(TokenType.Bot, token);
         await _client.StartAsync();
@@ -311,6 +311,15 @@ public class GemBot
                 case "spin" or "wheel":
                     await Spin(command);
                     break;
+                case "notifications":
+                    await Notifications(command);
+                    break;
+                case "key":
+                    await Key(command);
+                    break;
+                case "exchange":
+                    await CharmsToCoins(command);
+                    break;
                 default:
                     await command.RespondAsync($"Command {command.Data.Name} not found", ephemeral: true);
                     break;
@@ -323,7 +332,7 @@ public class GemBot
             try
             {
                 User user = await GetUser(command.User.Id);
-                int delay = (int)await user.GetSetting("delayBeforeDelete", 60);
+                int delay = (int) user.GetSetting("delayBeforeDelete", 60);
                 if (delay == 0)
                 {
                     return;
@@ -401,13 +410,14 @@ public class GemBot
             compact = false;
         }
         User user = await GetUser(command.User.Id);
-        await user.Increase("commands", 1);
+        user.Increase("commands", 1);
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle(title)
             .WithDescription(await BalanceRaw(compact, command.User.Id, ""))
-            .WithColor((uint)await user.GetSetting("uiColor", 3287295));
+            .WithColor((uint)user.GetSetting("uiColor", 3287295));
         await command.RespondAsync(embed: embay.Build(), ephemeral: ephemeral);
-        if (await Tools.CharmEffect(["betterAutoRefresh"], _items, user) == 0) return;
+        await user.Save();
+        if (Tools.CharmEffect(["betterAutoRefresh"], _items, user) == 0) return;
         ulong upperTime = Tools.CurrentTime() + 1800;
         while (Tools.CurrentTime() < upperTime)
         {
@@ -415,7 +425,7 @@ public class GemBot
             embay = new EmbedBuilder()
                 .WithTitle(title)
                 .WithDescription(await BalanceRaw(compact, command.User.Id, ""))
-                .WithColor((uint)await user.GetSetting("uiColor", 3287295));
+                .WithColor((uint)user.GetSetting("uiColor", 3287295));
             await command.ModifyOriginalResponseAsync(p =>
             {
                 p.Embed = embay.Build();
@@ -448,7 +458,7 @@ public class GemBot
     private async Task Stats(SocketSlashCommand command)
     {
         User user = await GetUser(command.User.Id);
-        await user.Increase("commands", 1);
+        user.Increase("commands", 1);
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle($"{command.User.Username}'s stats")
             .WithDescription($"View all the stats for {command.User.Username}.")
@@ -464,7 +474,7 @@ public class GemBot
                 $"Earned {user.GetStat("earned")} diamond-equivalents by grinding only."
                 + $"\n > Gifted {user.GetStat("gifted")} diamond-equivelents to other users only."
                 + "\n > Diamond Equivalents: one diamond is 1, one emerald is 10, one sapphire is 100, one ruby is 1,000, and one amber is 10,000")
-            .WithColor(new Color((uint)await user.GetSetting("uiColor", 3287295)));
+            .WithColor(new Color((uint)user.GetSetting("uiColor", 3287295)));
         await command.RespondAsync(embed: embay.Build());
     }
     private async Task Beg(SocketSlashCommand command)
@@ -472,16 +482,31 @@ public class GemBot
         User user = await GetUser(command.User.Id);
         if (command.Data.Options.Count >= 1)
         {
-            await user.SetSetting("hideBeg", (ulong)(long)command.Data.Options.First().Value);
+            user.SetSetting("hideBeg", (ulong)(long)command.Data.Options.First().Value);
         }
         ulong t = Tools.CurrentTime();
-        uint timeoutFor = (await Tools.CharmEffect(["fasterCooldown", "positive"], _items, user)) switch
+        uint timeoutFor = (Tools.CharmEffect(["fasterCooldown", "positive"], _items, user)) switch
         {
-            <= 100 => 5,
-            <= 180 => 4,
-            <= 275 => 3,
-            <= 399 => 2,
-            <= 500 => 1,
+            < 1 => 20,
+            < 8 => 19,
+            < 27 => 18,
+            < 64 => 17,
+            < 125 => 16,
+            < 216 => 15,
+            < 343 => 14,
+            < 512 => 13,
+            < 729 => 12,
+            < 1000 => 11,
+            < 1331 => 10,
+            < 1728 => 9,
+            < 2197 => 8,
+            < 2744 => 7,
+            < 3375 => 6,
+            < 4096 => 5,
+            < 4913 => 4,
+            < 5832 => 3,
+            < 6859 => 2,
+            < 8000 => 1,
             _ => 0
         };
         if (await user.OnCoolDown("beg", t, timeoutFor))
@@ -489,63 +514,70 @@ public class GemBot
             throw new Cooldown(user.CoolDowns["beg"]);
         }
 
-        int mn = 5 + await Tools.CharmEffect(["BegMin", "Beg", "GrindMin", "Grind", "Positive"], _items, user);
-        int mx = 9 + await Tools.CharmEffect(["BegMax", "Beg", "GrindMax", "Grind", "Positive"], _items, user);
+        int mn = 5 + Tools.CharmEffect(["BegMin", "Beg", "GrindMin", "Grind", "Positive"], _items, user);
+        int mx = 9 + Tools.CharmEffect(["BegMax", "Beg", "GrindMax", "Grind", "Positive"], _items, user);
         int amnt = _rand.Next(mn, mx);
-        int chanceRoll = _rand.Next(0, 500) + 1; //random number from 1 to 500
-        await user.Increase("commands", 1, false);
-        await user.Increase("beg", 1);
-        int sucsessChance = 300 - (int) user.GetProgress("begSuccess") + await Tools.CharmEffect(["BegChance", "Beg"], _items, user);
+        int chanceRoll = _rand.Next(0, 200) + 1; //random number from 1 to 200
+        user.Increase("commands", 1);
+        user.Increase("beg", 1);
+        int sucsessChance = 120 - (int) user.GetProgress("begSuccess") + (Tools.CharmEffect(["BegChance", "Beg"], _items, user))*2;
         if (sucsessChance < 50) sucsessChance = 50;
         if (chanceRoll > sucsessChance)
         {
-            uint color = (uint)(await user.GetSetting("begRandom", 0) switch
+            uint color = (uint)(user.GetSetting("begRandom", 0) switch
             {
-                0 => await user.GetSetting("begColor", 65525),
+                0 => user.GetSetting("begColor", 65525),
                 1 => (ulong)_rand.Next(16777216), 
                 _ => (ulong)3342180
             });
-            if (await user.GetSetting("begFailRed", 1) == 1) color = 16711680;
-            await user.Increase("begFail", 1);
+            if (user.GetSetting("begFailRed", 1) == 1) color = 16711680;
+            user.Increase("begFail", 1);
             EmbedBuilder embayFail = new EmbedBuilder()
                 .WithTitle("Beg failure!")
-                .WithDescription($"You failed and didn't get any gems. \n > You had a {sucsessChance/5}.{(sucsessChance%5) * 2}% chance to succeed.")
+                .WithDescription($"You failed and didn't get any gems. \n > You had a {sucsessChance/2}.{(sucsessChance%2) * 5}% chance to succeed.")
                 .WithColor(new Color(color));
-            await command.RespondAsync(embed: embayFail.Build(), ephemeral:await user.GetSetting("hideBeg", 0) == 1);
+            await command.RespondAsync(embed: embayFail.Build(), ephemeral:user.GetSetting("hideBeg", 0) == 1);
+            await user.Save();
             return;
         }
-        await user.Add(amnt, 0, false);
+        user.Add(amnt, 0);
         string text = $"You gained {amnt} **Diamonds**.";
         if (Tools.ShowEmojis(command, Settings.BotID(), _client))
         {
             text = $"You gained {amnt}{_currency[0]}!";
         }
-        await user.Increase("earned", amnt, false);
-        await user.Increase("begSuccess", 1);
+        user.Increase("earned", amnt);
+        user.Increase("begSuccess", 1);
         List<string> begChoices = _dataLists["BegEffects"];
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle(text)
             .WithDescription(begChoices[_rand.Next(0, begChoices.Count)])
-            .WithColor(new Color((uint)(await user.GetSetting("begRandom", 0) switch
+            .WithColor(new Color((uint)(user.GetSetting("begRandom", 0) switch
             {
-                0 => await user.GetSetting("begColor", 65525), 1 => (ulong)_rand.Next(16777216), _ => (ulong)3342180
+                0 => user.GetSetting("begColor", 65525), 1 => (ulong)_rand.Next(16777216), _ => (ulong)3342180
             })));
-        await command.RespondAsync(embed: embay.Build(), ephemeral:await user.GetSetting("hideBeg", 0) switch {1 => true, _ => false});
+        if (_rand.Next(0, 5) == 4)
+        {
+            embay.AddField($"You also gained 1{_items[0].Emoji}!", " > This happens 20% of the time");
+            user.GainItem(0, 1);
+        }
+        await command.RespondAsync(embed: embay.Build(), ephemeral:user.GetSetting("hideBeg", 0) switch {1 => true, _ => false});
+        await user.Save();
     }
     private async Task Work(SocketSlashCommand command)
     {
         CachedUser cached = await GetUser(command.User.Id);
         User user = cached.User;
+        user.UpdateDay(Tools.CurrentDay());
         ulong t = Tools.CurrentTime();
-        int effect = await Tools.CharmEffect(["fasterCooldown", "positive"], _items, user);
+        int effect = Tools.CharmEffect(["fasterCooldown", "positive"], _items, user);
         uint timeoutFor = effect switch
         {
-            <= 0 => 300,
-            <= 60 => 300-(uint)effect,
-            <= 180 => 240-((uint)effect-60)/2,
-            <= 360 => 180-((uint)effect-180)/3,
-            <= 600 => 120-((uint)effect-360)/4,
-            <= 900 => 60-((uint)effect-600)/5,
+            <= 0 => 1800,
+            <= 120 => 1800-((uint)effect)*5/2,
+            <= 620 => 1500-((uint)effect-120)*3/2,
+            <= 1120 => 750-((uint)effect-620),
+            <= 1620 => 250-((uint)effect-1120)/2,
             _ => 0
         };
         if (await user.OnCoolDown("work", t, timeoutFor))
@@ -571,7 +603,7 @@ public class GemBot
                 int circleID = _rand.Next(circles.Count);
                 embay.WithDescription($"Remember the color of the following shapes\n > {hearts[heartID]} {squares[squareID]} {circles[circleID]}");
                 await command.RespondAsync(text, embed: embay.Build());
-                await Task.Delay(8000);
+                await Task.Delay(6000);
                 embay.WithDescription($"What was the color of the {types[choiceShape]}?");
                 int chosenID = choiceShape switch { 0 => heartID, 1 => squareID, _ => circleID };
                 List<string> chosenList = choiceShape switch { 0 => hearts, 1=> squares, _ => circles };
@@ -618,18 +650,20 @@ public class GemBot
     private async Task<EmbedBuilder> InventoryRawEmbed(ulong id, string options)
     {
         User user = await GetUser(id);
+        bool showAll = user.GetSetting("ShowAllItemsInventory", 1) == 1;
         List<Tuple<int, int>> data = [];
         for (int i = 0; i < user.Inventory.Count; i++)
         {
-            int amount = await user.ItemAmount(i);
+            int amount = user.ItemAmount(i);
+            if (!showAll && amount == 0) continue;
             data.Add(new Tuple<int, int>(i, amount));
         }
 
         List<Tuple<int, int>> sortedData = data.OrderBy(o => -o.Item2 * _items[o.Item1].Value).ToList();
-        string[] optionsSplit = options.Split("|");
         try
         {
             string text = "View all your items:";
+            string[] optionsSplit = options.Split("|");
             int page = int.Parse(optionsSplit[0]);
             bool showEmojis = optionsSplit[1].StartsWith('y') || optionsSplit[1].StartsWith('t') ||
                               optionsSplit[1].StartsWith('T');
@@ -657,7 +691,7 @@ public class GemBot
                 }
             }
 
-            return new EmbedBuilder().WithTitle("Inventory").WithDescription(text).WithColor((uint)await user.GetSetting("uiColor", 3287295));
+            return new EmbedBuilder().WithTitle("Inventory").WithDescription(text).WithColor((uint)user.GetSetting("uiColor", 3287295));
         }
         catch (FormatException)
         {
@@ -678,20 +712,14 @@ public class GemBot
     {
         User user = await GetUser(command.User.Id);
         ulong t = (ulong)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
-        uint timeoutFor = (await Tools.CharmEffect(["fasterCooldown", "positive"], _items, user)) switch
+        uint timeoutFor = (Tools.CharmEffect(["fasterCooldown", "positive"], _items, user)) switch
         {
-            <= 30 => 12,
-            <= 60 => 11,
-            <= 90 => 10,
-            <= 120 => 9,
-            <= 160 => 8,
-            <= 200 => 7,
-            <= 250 => 6,
-            <= 300 => 5,
-            <= 350 => 4,
-            <= 450 => 3,
-            <= 550 => 2,
-            <= 650 => 1,
+            < 1 => 60, < 4 => 59, < 9 => 58, < 16 => 57, < 25 => 56, < 36 => 55, < 49 => 54, < 64 => 53, < 81 => 52, < 100 => 51, 
+            < 121 => 50, < 144 => 49, < 169 => 48, < 196 => 47, < 225 => 46, < 256 => 45, < 300 => 44, < 350 => 43, < 400 => 42, < 450 => 41,
+            < 500 => 40, < 550 => 39, < 600 => 38, < 650 => 37, < 700 => 36, < 750 => 35, < 800 => 34, < 850 => 33, < 900 => 32, < 950 => 31,
+            < 1000 => 30, < 1070 => 29, < 1140 => 28, < 1210 => 27, < 1280 => 26, < 1350 => 25, < 1420 => 24, < 1490 => 23, < 1560 => 22, < 1630 => 21,
+            < 1700 => 20, < 1800 => 19, < 1900 => 18, < 2000 => 17, < 2100 => 16, < 2200 => 15, < 2300 => 14, < 2400 => 13, < 2500 => 12, < 2600 => 11,
+            < 2700 => 10, < 2845 => 9, < 2990 => 8, < 3135 => 7, < 3280 => 6, < 3425 => 5, < 3570 => 4, < 3715 => 3, < 3860 => 2, < 4005 => 1,
             _ => 0
         };
         if (await user.OnCoolDown("magik", t, timeoutFor))
@@ -699,7 +727,7 @@ public class GemBot
             throw new Cooldown(user.CoolDowns["magik"]);
         }
 
-        int power = await Tools.CharmEffect(["Magik", "Unlocker", "Positive"], _items, user);
+        int power = Tools.CharmEffect(["Magik", "Unlocker", "Positive"], _items, user);
         bool badInput = false;
         ulong targetID;
         try
@@ -707,16 +735,16 @@ public class GemBot
             targetID = ((SocketGuildUser)command.Data.Options.First().Value).Id;
             if (command.Data.Options.Last().Value.ToString() == "yes")
             {
-                await user.SetSetting("magikID", targetID);
+                user.SetSetting("magikID", targetID);
             }
         }
         catch (InvalidOperationException)
         {
-            targetID = await user.GetSetting("magikID", user.ID);
+            targetID = user.GetSetting("magikID", user.ID);
         }
         catch (InvalidCastException)
         {
-            targetID = await user.GetSetting("magikID", user.ID);
+            targetID = user.GetSetting("magikID", user.ID);
             badInput = true;
         }
 
@@ -727,7 +755,7 @@ public class GemBot
         }
 
         power += _rand.Next(0, 2);
-        if (targetID != await user.GetSetting("magikID", user.ID))
+        if (targetID != user.GetSetting("magikID", user.ID))
         {
             power += 1;
         }
@@ -744,7 +772,6 @@ public class GemBot
             chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 7$diamonds", 7, 0, 7, 0, 10));
             chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 8$diamonds", 8, 0, 8, 0, 4));
         }
-
         if (power >= 3)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 11$diamonds!", 11, 0, 11, 0, 12));
@@ -753,7 +780,6 @@ public class GemBot
             chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
             chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
         }
-
         if (power >= 4)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 1$emeralds", 1, 1, 1, 1, 15));
@@ -766,13 +792,11 @@ public class GemBot
             chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
             chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
         }
-
         if (power >= 5)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained 1$sapphires", 1, 2, 0, 0, 4));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained 1$sapphires", 0, 0, 1, 2, 4));
         }
-
         if (power >= 6)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 80$diamonds", 80, 0, 80, 0, 12));
@@ -781,19 +805,16 @@ public class GemBot
             chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
             chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
         }
-
         if (power >= 8)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_wand\n$target gained $target_wand", 0, 0, 0, 0, 1));
         }
-
         if (power >= 9)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm", 0, 0, 0, 0, 5));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm", 0, 0, 0, 0, 4));
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm and $target gained $target_charm", 0, 0, 0, 0, 1));
         }
-
         if (power >= 10)
         {
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm", 0, 0, 0, 0, 5));
@@ -801,7 +822,6 @@ public class GemBot
             chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm, $user_charm2", 0, 0, 0, 0, 2));
             chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm, $target_charm2", 0, 0, 0, 0, 1));
         }
-
         List<int> pickFrom = [];
         for (int i = 0; i < chances.Count; i++)
         {
@@ -810,14 +830,13 @@ public class GemBot
                 pickFrom.Add(i);
             }
         }
-        
         Tuple<string, int, int, int, int, int> tuple = chances[pickFrom[_rand.Next(pickFrom.Count)]];
-        await user.Increase("commands", 1, false);
-        await user.Increase("magik", 1, false);
-        await user.Increase("earned", (int)(tuple.Item2*Math.Pow(10, tuple.Item3)), false);
-        await user.Add(tuple.Item2, tuple.Item3);
-        await target.Increase("earned", (int)(tuple.Item4 * Math.Pow(10, tuple.Item5)), false);
-        await target.Add(tuple.Item4, tuple.Item5);
+        user.Increase("commands", 1);
+        user.Increase("magik", 1);
+        user.Increase("earned", (int)(tuple.Item2*Math.Pow(10, tuple.Item3)));
+        user.Add(tuple.Item2, tuple.Item3);
+        target.Increase("earned", (int)(tuple.Item4 * Math.Pow(10, tuple.Item5)));
+        target.Add(tuple.Item4, tuple.Item5);
         string diamonds = " **diamonds**";
         string emeralds = " **emeralds**";
         string sapphires = " **sapphires**";
@@ -828,19 +847,18 @@ public class GemBot
             emeralds = _currency[1];
             sapphires = _currency[2];
         }
-
         string toRespond = tuple.Item1
             .Replace("$diamonds", diamonds)
             .Replace("$emeralds", emeralds)
             .Replace("$sapphires", sapphires)
-            .Replace("$user", $"<@{user.ID}>")
-            .Replace("$target", $"<@{target.ID}>")
             .Replace("$user_charm", "`")
             .Replace("$user_charm2", "~")
             .Replace("$target_charm", "%")
             .Replace("$target_charm2", "¡")
             .Replace("$user_wand", "*")
-            .Replace("$target_ward", "•");
+            .Replace("$target_wand", "•")
+            .Replace("$user", $"<@{user.ID}>")
+            .Replace("$target", $"<@{target.ID}>");
         foreach (char c in toRespond)
         {
             switch (c)
@@ -848,15 +866,15 @@ public class GemBot
                 case '`':
                 {
                     int itemID = Tools.GetCharm(_itemLists, 0, 99);
-                    await user.GainItem(itemID, 1);
+                    user.GainItem(itemID, 1);
                     toRespond = toRespond.Replace("`",
                         emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
                     break;
                 }
                 case '~':
                 {
-                    int itemID = Tools.GetCharm(_itemLists, 0, 99);
-                    await user.GainItem(itemID, 1);
+                    int itemID = Tools.GetCharm(_itemLists, 0, 199);
+                    user.GainItem(itemID, 1);
                     toRespond = toRespond.Replace("~",
                         emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
                     break;
@@ -864,7 +882,7 @@ public class GemBot
                 case '%':
                 {
                     int itemID = Tools.GetCharm(_itemLists, 0, 99);
-                    await target.GainItem(itemID, 1);
+                    target.GainItem(itemID, 1);
                     toRespond = toRespond.Replace("%",
                         emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
                     break;
@@ -872,21 +890,21 @@ public class GemBot
                 case '¡':
                 {
                     int itemID = Tools.GetCharm(_itemLists, 0, 199);
-                    await target.GainItem(itemID, 1);
+                    target.GainItem(itemID, 1);
                     toRespond = toRespond.Replace("¡",
                         emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
                     break;
                 }
                 case '*':
                 {
-                    await user.GainItem(10, 1);
-                    toRespond = toRespond.Replace("¡", emoji ? $"1{_items[10].Emoji}" : $"1 **{_items[10].Name}**");
+                    user.GainItem(10, 1);
+                    toRespond = toRespond.Replace("*", emoji ? $"1{_items[10].Emoji}" : $"1 **{_items[10].Name}**");
                     break;
                 }
                 case '•':
                 {
-                    await target.GainItem(10, 1);
-                    toRespond = toRespond.Replace("¡", emoji ? $"1{_items[10].Emoji}" : $"1 **{_items[10].Name}**");
+                    target.GainItem(10, 1);
+                    toRespond = toRespond.Replace("•", emoji ? $"1{_items[10].Emoji}" : $"1 **{_items[10].Name}**");
                     break;
                 }
             }
@@ -896,9 +914,9 @@ public class GemBot
             .WithTitle("Magik Time!")
             .WithDescription(toRespond)
             .WithFooter($"Magik by gemBOT: {power} power!")
-            .WithColor(new Color((uint)(await user.GetSetting("magikRandomColor", 1) switch
+            .WithColor(new Color((uint)(user.GetSetting("magikRandomColor", 1) switch
             {
-                0 => await user.GetSetting("magikColor", 13107400), _ => (ulong)_rand.Next(16777216)
+                0 => user.GetSetting("magikColor", 13107400), _ => (ulong)_rand.Next(16777216)
             })));
         string topText = power switch
         {
@@ -980,79 +998,79 @@ public class GemBot
         {
             //default = 0
             case 0:
-                await user.SetSetting("bankLeftStyle", 0, false);
-                await user.SetSetting("bankRightStyle", 2, false);
-                await user.SetSetting("bankShowRed", 1, false);
-                await user.SetSetting("begRandom", 0, false);
-                await user.SetSetting("begColor", 65525, false);
-                await user.SetSetting("magikRandomColor", 1, false);
-                await user.SetSetting("uiColor", 3287295, false);
-                await user.SetSetting("begFailRed", 1, false);
+                user.SetSetting("bankLeftStyle", 0);
+                user.SetSetting("bankRightStyle", 2);
+                user.SetSetting("bankShowRed", 1); 
+                user.SetSetting("begRandom", 0);
+                user.SetSetting("begColor", 65525);
+                user.SetSetting("magikRandomColor", 1);
+                user.SetSetting("uiColor", 3287295);
+                user.SetSetting("begFailRed", 1);
                 await user.Save();
                 themeName = "default";
                 break;
             //discord = 1
             case 1:
-                await user.SetSetting("bankLeftStyle", 0, false);
-                await user.SetSetting("bankRightStyle", 0, false);
-                await user.SetSetting("bankShowRed", 0, false);
-                await user.SetSetting("begRandom", 0, false);
-                await user.SetSetting("begColor", 5793266, false);
-                await user.SetSetting("magikRandomColor", 0, false);
-                await user.SetSetting("magikColor", 6584831, false);
-                await user.SetSetting("uiColor", 6566600, false);
-                await user.SetSetting("begFailRed", 1, false);
+                user.SetSetting("bankLeftStyle", 0);
+                user.SetSetting("bankRightStyle", 0);
+                user.SetSetting("bankShowRed", 0);
+                user.SetSetting("begRandom", 0);
+                user.SetSetting("begColor", 5793266);
+                user.SetSetting("magikRandomColor", 0);
+                user.SetSetting("magikColor", 6584831);
+                user.SetSetting("uiColor", 6566600);
+                user.SetSetting("begFailRed", 1);
                 await user.Save();
                 themeName = "Discord";
                 break;
             //green = 2
-            case 2:
-                await user.SetSetting("bankLeftStyle", 1, false);
-                await user.SetSetting("bankRightStyle", 1, false);
-                await user.SetSetting("bankShowRed", 1, false);
-                await user.SetSetting("begRandom", 0, false);
-                await user.SetSetting("begColor", 3342180, false);
-                await user.SetSetting("magikRandomColor", 1, false);
-                await user.SetSetting("uiColor", 57640, false);
-                await user.SetSetting("begFailRed", 1, false);
+            case 2: 
+                user.SetSetting("bankLeftStyle", 1);
+                user.SetSetting("bankRightStyle", 1);
+                user.SetSetting("bankShowRed", 1);
+                user.SetSetting("begRandom", 0);
+                user.SetSetting("begColor", 3342180);
+                user.SetSetting("magikRandomColor", 1);
+                user.SetSetting("uiColor", 57640);
+                user.SetSetting("begFailRed", 1);
                 themeName = "Green";
                 break;
             //grey = 3
             case 3:
-                await user.SetSetting("bankLeftStyle", 2, false);
-                await user.SetSetting("bankRightStyle", 2, false);
-                await user.SetSetting("bankShowRed", 1, false);
-                await user.SetSetting("begRandom", 0, false);
-                await user.SetSetting("begColor", 8224125, false);
-                await user.SetSetting("magikRandomColor", 0, false);
-                await user.SetSetting("magikColor", 0, false);
-                await user.SetSetting("uiColor", 5260890, false);
-                await user.SetSetting("begFailRed", 1, false);
+                user.SetSetting("bankLeftStyle", 2);
+                user.SetSetting("bankRightStyle", 2);
+                user.SetSetting("bankShowRed", 1);
+                user.SetSetting("begRandom", 0);
+                user.SetSetting("begColor", 8224125);
+                user.SetSetting("magikRandomColor", 0);
+                user.SetSetting("magikColor", 0);
+                user.SetSetting("uiColor", 5260890);
+                user.SetSetting("begFailRed", 1);
                 await user.Save();
                 themeName = "Grey";
                 break;
             //random = 4
             case 4:
-                await user.SetSetting("bankLeftStyle", (ulong)_rand.Next(0, 3), false);
-                await user.SetSetting("bankShowRed", (ulong)_rand.Next(0, 2), false);
-                await user.SetSetting("begRandom", 1, false);
-                await user.SetSetting("magikRandomColor", 1, false);
-                await user.SetSetting("uiColor", (ulong)_rand.Next(16777216), false);
-                await user.SetSetting("bankRightStyle", (ulong)_rand.Next(0, 3), false);
-                await user.SetSetting("begFailRed", (ulong)_rand.Next(2), false);
+                user.SetSetting("bankLeftStyle", (ulong)_rand.Next(0, 3));
+                user.SetSetting("bankShowRed", (ulong)_rand.Next(0, 2));
+                user.SetSetting("begRandom", 1);
+                user.SetSetting("magikRandomColor", 1);
+                user.SetSetting("uiColor", (ulong)_rand.Next(16777216));
+                user.SetSetting("bankRightStyle", (ulong)_rand.Next(0, 3));
+                user.SetSetting("begFailRed", (ulong)_rand.Next(2));
                 await user.Save();
                 themeName = "Random (the uiColor is randomized just once: now)";
                 break;
             //OG = 5
             case 5:
-                await user.SetSetting("bankLeftStyle", 0, false);
-                await user.SetSetting("bankRightStyle", 0, false);
-                await user.SetSetting("bankShowRed", 0, false);
-                await user.SetSetting("begRandom", 0, false);
-                await user.SetSetting("begColor", 65535, false);
-                await user.SetSetting("magikRandomColor", 1, false);
-                await user.SetSetting("uiColor", 65535, false);
-                await user.SetSetting("begFailRed", 0, false);
+                user.SetSetting("bankLeftStyle", 0);
+                user.SetSetting("bankRightStyle", 0);
+                user.SetSetting("bankShowRed", 0);
+                user.SetSetting("begRandom", 0);
+                user.SetSetting("begColor", 65535);
+                user.SetSetting("magikRandomColor", 1);
+                user.SetSetting("uiColor", 65535);
+                user.SetSetting("begFailRed", 0);
                 await user.Save();
                 themeName = "OG Gembot";
                 break;
@@ -1060,13 +1078,13 @@ public class GemBot
 
         await command.RespondAsync(embed: new EmbedBuilder().WithTitle("Theme Changed")
             .WithDescription($"Your gemBOT theme has been changed to {themeName}.")
-            .WithColor((uint)await user.GetSetting("uiColor", 3287295)).Build());
+            .WithColor((uint)user.GetSetting("uiColor", 3287295)).Build());
     }
     private async Task<Tuple<EmbedBuilder, ComponentBuilder, string>> BankRaw(bool showEmojis, ulong userId)
     {
         bool compact = showEmojis;
         User user = await GetUser(userId);
-        await user.Increase("commands", 1);
+        user.Increase("commands", 1);
         string balanceText = await BalanceRaw(showEmojis, userId);
         string diamonds = _currency[0];
         string emeralds = _currency[1];
@@ -1075,41 +1093,50 @@ public class GemBot
         string ambers = _currency[4];
         if (!compact)
         {
-            diamonds = " **diamonds**";
-            emeralds = " **emeralds**";
-            sapphires = " **sapphires**";
-            rubies = " **rubies**";
-            ambers = " **amber**";
+            diamonds = _currencyNoEmoji[0];
+            emeralds = _currencyNoEmoji[1];
+            sapphires = _currencyNoEmoji[2];
+            rubies = _currencyNoEmoji[3];
+            ambers = _currencyNoEmoji[0];
         }
-
         int upgradePrice = 11;
         int downgradeReward = 9;
-        if (await Tools.CharmEffect(["BetterBankTrades"], _items, user) >= 1)
+        int upgradePriceB = 105;
+        int downgradeRewardB = 96;
+        if (Tools.CharmEffect(["BetterBankTrades"], _items, user) >= 1)
         {
             upgradePrice = 10;
             downgradeReward = 10;
+            upgradePriceB = 100;
+            downgradeRewardB = 100;
         }
 
-        ButtonStyle leftMain = await user.GetSetting("bankLeftStyle", 0) switch
+        ButtonStyle leftMain = user.GetSetting("bankLeftStyle", 0) switch
         {
             0 => ButtonStyle.Primary, 1 => ButtonStyle.Success, _ => ButtonStyle.Secondary
         };
-        ButtonStyle rightMain = await user.GetSetting("bankRightStyle", 2) switch
+        ButtonStyle rightMain = user.GetSetting("bankRightStyle", 2) switch
         {
             0 => ButtonStyle.Primary, 1 => ButtonStyle.Success, _ => ButtonStyle.Secondary
         };
-        ButtonStyle leftSecondary =
-            await user.GetSetting("bankShowRed", 1) switch { 1 => ButtonStyle.Danger, _ => leftMain };
-        ButtonStyle rightSecondary =
-            await user.GetSetting("bankShowRed", 1) switch { 1 => ButtonStyle.Danger, _ => rightMain };
-        ButtonStyle b1 = (user.Gems[0] >= 11) switch { true => leftMain, false => leftSecondary };
-        ButtonStyle b2 = (user.Gems[1] >= 11) switch { true => leftMain, false => leftSecondary };
-        ButtonStyle b3 = (user.Gems[2] >= 11) switch { true => leftMain, false => leftSecondary };
-        ButtonStyle b4 = (user.Gems[3] >= 11) switch { true => leftMain, false => leftSecondary };
+        ButtonStyle leftSecondary = user.GetSetting("bankShowRed", 1) switch { 1 => ButtonStyle.Danger, _ => leftMain };
+        ButtonStyle rightSecondary = user.GetSetting("bankShowRed", 1) switch { 1 => ButtonStyle.Danger, _ => rightMain };
+        ButtonStyle b1 = (user.Gems[0] >= upgradePrice) switch { true => leftMain, false => leftSecondary };
+        ButtonStyle b2 = (user.Gems[1] >= upgradePrice) switch { true => leftMain, false => leftSecondary };
+        ButtonStyle b3 = (user.Gems[2] >= upgradePrice) switch { true => leftMain, false => leftSecondary };
+        ButtonStyle b4 = (user.Gems[3] >= upgradePrice) switch { true => leftMain, false => leftSecondary };
         ButtonStyle b5 = (user.Gems[1] >= 1) switch { true => rightMain, false => rightSecondary };
         ButtonStyle b6 = (user.Gems[2] >= 1) switch { true => rightMain, false => rightSecondary };
         ButtonStyle b7 = (user.Gems[3] >= 1) switch { true => rightMain, false => rightSecondary };
         ButtonStyle b8 = (user.Gems[4] >= 1) switch { true => rightMain, false => rightSecondary };
+        ButtonStyle b9 = (user.Gems[0] >= upgradePriceB) switch { true => leftMain, false => leftSecondary };
+        ButtonStyle b10 = (user.Gems[1] >= upgradePriceB) switch { true => leftMain, false => leftSecondary };
+        ButtonStyle b11 = (user.Gems[2] >= upgradePriceB) switch { true => leftMain, false => leftSecondary };
+        ButtonStyle b12 = (user.Gems[3] >= upgradePriceB) switch { true => leftMain, false => leftSecondary };
+        ButtonStyle b13 = (user.Gems[1] >= 10) switch {true => rightMain, false => rightSecondary};
+        ButtonStyle b14 = (user.Gems[2] >= 10) switch {true => rightMain, false => rightSecondary};
+        ButtonStyle b15 = (user.Gems[3] >= 10) switch {true => rightMain, false => rightSecondary};
+        ButtonStyle b16 = (user.Gems[4] >= 10) switch {true => rightMain, false => rightSecondary};
         string emoj = showEmojis switch { true => "yes", false => "no" };
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle("Open Trades!")
@@ -1117,38 +1144,60 @@ public class GemBot
             .AddField(new EmbedFieldBuilder()
                 .WithName("Upgrades")
                 .WithValue($"""
-                            {upgradePrice}{diamonds} --> 1{emeralds}
-                            {upgradePrice}{emeralds} --> 1{sapphires}
-                            {upgradePrice}{sapphires} --> 1{rubies}
-                            {upgradePrice}{rubies} --> 1{ambers}
+                            1: {upgradePrice}{diamonds} --> 1{emeralds}
+                            2: {upgradePrice}{emeralds} --> 1{sapphires}
+                            3: {upgradePrice}{sapphires} --> 1{rubies}
+                            4: {upgradePrice}{rubies} --> 1{ambers}
+                            
+                            9: {upgradePriceB}{diamonds} --> 10{emeralds}
+                            10: {upgradePriceB}{emeralds} --> 10{sapphires}
+                            11: {upgradePriceB}{sapphires} --> 10{rubies}
+                            12: {upgradePriceB}{rubies} --> 10{ambers}
                             """)
                 .WithIsInline(true))
             .AddField(new EmbedFieldBuilder()
                 .WithName("Downgrades")
                 .WithValue($"""
-                            1{emeralds} --> {downgradeReward}{diamonds}
-                            1{sapphires} --> {downgradeReward}{emeralds}
-                            1{rubies} --> {downgradeReward}{sapphires}
-                            1{ambers} --> {downgradeReward}{rubies}
+                            5: 1{emeralds} --> {downgradeReward}{diamonds}
+                            6: 1{sapphires} --> {downgradeReward}{emeralds}
+                            7: 1{rubies} --> {downgradeReward}{sapphires}
+                            8: 1{ambers} --> {downgradeReward}{rubies}
+                            
+                            13: 10{emeralds} --> {downgradeRewardB}{diamonds}
+                            14: 10{sapphires} --> {downgradeRewardB}{emeralds}
+                            15: 10{rubies} --> {downgradeRewardB}{sapphires}
+                            16: 10{ambers} --> {downgradeRewardB}{rubies}
                             """)
                 .WithIsInline(true))
-            .WithColor(new Color((uint)await user.GetSetting("uiColor", 3287295)));
+            .WithColor(new Color((uint) user.GetSetting("uiColor", 3287295)));
         ComponentBuilder button = new ComponentBuilder()
                 .AddRow(new ActionRowBuilder()
                     .WithButton(new ButtonBuilder().WithLabel("1").WithStyle(b1).WithCustomId($"bank-0|{emoj}"))
                     .WithButton(new ButtonBuilder().WithLabel("5").WithStyle(b5).WithCustomId($"bank-4|{emoj}"))
+                    .WithButton(new ButtonBuilder().WithLabel("-").WithStyle(ButtonStyle.Secondary).WithCustomId("disabled-a").WithDisabled(true))
+                    .WithButton(new ButtonBuilder().WithLabel("9").WithStyle(b9).WithCustomId($"bank-8|{emoj}"))
+                    .WithButton(new ButtonBuilder().WithLabel("13").WithStyle(b13).WithCustomId($"bank-12|{emoj}"))
                 )
                 .AddRow(new ActionRowBuilder()
                     .WithButton(new ButtonBuilder().WithLabel("2").WithStyle(b2).WithCustomId($"bank-1|{emoj}"))
                     .WithButton(new ButtonBuilder().WithLabel("6").WithStyle(b6).WithCustomId($"bank-5|{emoj}"))
+                    .WithButton(new ButtonBuilder().WithLabel("-").WithStyle(ButtonStyle.Secondary).WithCustomId("disabled-b").WithDisabled(true))
+                    .WithButton(new ButtonBuilder().WithLabel("10").WithStyle(b10).WithCustomId($"bank-9|{emoj}"))
+                    .WithButton(new ButtonBuilder().WithLabel("14").WithStyle(b14).WithCustomId($"bank-13|{emoj}"))
                 )
                 .AddRow(new ActionRowBuilder()
                     .WithButton(new ButtonBuilder().WithLabel("3").WithStyle(b3).WithCustomId($"bank-2|{emoj}"))
                     .WithButton(new ButtonBuilder().WithLabel("7").WithStyle(b7).WithCustomId($"bank-6|{emoj}"))
+                    .WithButton(new ButtonBuilder().WithLabel("-").WithStyle(ButtonStyle.Secondary).WithCustomId("disabled-c").WithDisabled(true))
+                    .WithButton(new ButtonBuilder().WithLabel("11").WithStyle(b11).WithCustomId($"bank-10|{emoj}"))
+                    .WithButton(new ButtonBuilder().WithLabel("15").WithStyle(b15).WithCustomId($"bank-14|{emoj}"))
                 )
                 .AddRow(new ActionRowBuilder()
                     .WithButton(new ButtonBuilder().WithLabel("4").WithStyle(b4).WithCustomId($"bank-3|{emoj}"))
                     .WithButton(new ButtonBuilder().WithLabel("8").WithStyle(b8).WithCustomId($"bank-7|{emoj}"))
+                    .WithButton(new ButtonBuilder().WithLabel("-").WithStyle(ButtonStyle.Secondary).WithCustomId("disabled-d").WithDisabled(true))
+                    .WithButton(new ButtonBuilder().WithLabel("12").WithStyle(b12).WithCustomId($"bank-11|{emoj}"))
+                    .WithButton(new ButtonBuilder().WithLabel("16").WithStyle(b16).WithCustomId($"bank-15|{emoj}"))
                 )
             ;
         return new Tuple<EmbedBuilder, ComponentBuilder, string>(embay, button, balanceText);
@@ -1159,6 +1208,7 @@ public class GemBot
             await BankRaw(Tools.ShowEmojis(command, Settings.BotID(), _client), command.User.Id);
         await command.RespondAsync(results.Item3, ephemeral: false, embed: results.Item1.Build(),
             components: results.Item2.Build());
+        await (await GetUser(command.User.Id)).User.Save();
     }
     private async Task<Tuple<EmbedBuilder, List<string>>> QuestsEmbed(CachedUser user, bool showEmoji = true)
     {
@@ -1166,7 +1216,7 @@ public class GemBot
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle("Your quests!")
             .WithDescription("View your daily quests!")
-            .WithColor((uint)await user.User.GetSetting("uiColor", 3287295));
+            .WithColor((uint)user.User.GetSetting("uiColor", 3287295));
         user.User.UpdateDay(Tools.CurrentDay());
         if (_quests[0].Date < Tools.CurrentDay())
         {
@@ -1182,7 +1232,7 @@ public class GemBot
             }
             await File.WriteAllTextAsync("Data/DailyQuests/DateQuestsMap.txt", JsonConvert.SerializeObject(mapToQuests));
         }
-        bool isSmall = await user.User.GetSetting("smallProgress", 0) switch {0 => false, _ => true };
+        bool isSmall = user.User.GetSetting("smallProgress", 0) switch {0 => false, _ => true };
         for (int i = 0; i < _quests.Count; i++)
         {
             DailyQuest quest = _quests[i];
@@ -1200,113 +1250,113 @@ public class GemBot
                     switch (i)
                     {
                         case 0:
-                            if (await Tools.CharmEffect(["CommonQuests"], _items, user) > 0)
+                            if (Tools.CharmEffect(["CommonQuests"], _items, user) > 0)
                             {
-                                await user.User.Add(120, 0);
-                                await user.User.Increase("earned", 120);
+                                user.User.Add(120, 0);
+                                user.User.Increase("earned", 120);
                                 string currency = showEmoji switch { true => _currency[0], false => " **diamonds**" };
                                 text.Add($"<@{user.User.ID}> earned 120{currency}");
                             }
                             else
-                            {
-                                await user.User.Add(60, 0);
-                                await user.User.Increase("earned", 60);
+                            { 
+                                user.User.Add(60, 0);
+                                user.User.Increase("earned", 60);
                                 string currency = showEmoji switch { true => _currency[0], false => " **diamonds**" };
                                 text.Add($"<@{user.User.ID}> earned 60{currency}");
                             }
                             break;
                         case 1:
-                            if (await Tools.CharmEffect(["UncommonQuests"], _items, user) > 0)
+                            if (Tools.CharmEffect(["UncommonQuests"], _items, user) > 0)
                             {
-                                await user.User.Add(20, 1);
-                                await user.User.Increase("earned", 200);
+                                user.User.Add(20, 1);
+                                user.User.Increase("earned", 200);
                                 int charmID = Tools.GetCharm(_itemLists, 0, 50, _rand);
-                                await user.User.GainItem(charmID, 1);
+                                user.User.GainItem(charmID, 1);
                                 string currency = showEmoji switch { true => _currency[1], false => " **emeralds**" };
                                 string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
                                 text.Add($"<@{user.User.ID}> earned 20{currency} + 1{charm1}");
                             }
                             else
                             {
-                                await user.User.Add(40, 1);
-                                await user.User.Increase("earned", 400);
+                                user.User.Add(40, 1);
+                                user.User.Increase("earned", 400);
                                 string currency = showEmoji switch { true => _currency[1], false => " **emeralds**" };
                                 text.Add($"<@{user.User.ID}> earned 40{currency}");
                             }
                             break;
                         case 2:
-                            if (await Tools.CharmEffect(["RareQuests"], _items, user) > 0)
+                            if (Tools.CharmEffect(["RareQuests"], _items, user) > 0)
                             {
-                                await user.User.Add(19, 2);
-                                await user.User.Increase("earned", 1900);
+                                user.User.Add(19, 2);
+                                user.User.Increase("earned", 1900);
                                 int charmID = Tools.GetCharm(_itemLists, 0, 32, _rand);
-                                await user.User.GainItem(charmID, 1);
+                                user.User.GainItem(charmID, 1);
                                 string currency = showEmoji switch { true => _currency[2], false => " **sapphires**" };
                                 string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
                                 int charmID2 = Tools.GetCharm(_itemLists, 0, 22, _rand);
-                                await user.User.GainItem(charmID2, 1);
+                                user.User.GainItem(charmID2, 1);
                                 string charm2 = showEmoji switch { true => _items[charmID2].Emoji, false => $" **{_items[charmID2].Name}**"};
                                 text.Add($"<@{user.User.ID}> earned 19{currency} + 1{charm1} + 1{charm2}");
                             }
                             else
                             {
-                                await user.User.Add(19, 2);
-                                await user.User.Increase("earned", 1900);
+                                user.User.Add(19, 2);
+                                user.User.Increase("earned", 1900);
                                 int charmID = Tools.GetCharm(_itemLists, 0, 28, _rand);
-                                await user.User.GainItem(charmID, 1);
+                                user.User.GainItem(charmID, 1);
                                 string currency = showEmoji switch { true => _currency[2], false => " **sapphires**" };
                                 string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
                                 text.Add($"<@{user.User.ID}> earned 19{currency} + 1{charm1}");
                             }
                             break;
                         case 3:
-                            if (await Tools.CharmEffect(["EpikQuests"], _items, user) > 0)
+                            if (Tools.CharmEffect(["EpikQuests"], _items, user) > 0)
                             {
-                                await user.User.Add(5, 3);
-                                await user.User.Increase("earned", 5000);
+                                user.User.Add(5, 3);
+                                user.User.Increase("earned", 5000);
                                 int charmID = Tools.GetCharm(_itemLists, 0, 9, _rand);
-                                await user.User.GainItem(charmID, 1);
+                                user.User.GainItem(charmID, 1);
                                 string currency = showEmoji switch { true => _currency[3], false => " **rubies**" };
                                 string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
                                 int charmID2 = Tools.GetCharm(_itemLists, 1, 17, _rand);
-                                await user.User.GainItem(charmID2, 1);
+                                user.User.GainItem(charmID2, 1);
                                 string charm2 = showEmoji switch { true => _items[charmID2].Emoji, false => $" **{_items[charmID2].Name}**"};
                                 text.Add($"<@{user.User.ID}> earned 5{currency} + 1{charm1} + 1{charm2}");
                             }
                             else
                             {
-                                await user.User.Add(3, 3);
-                                await user.User.Increase("earned", 3000);
+                                user.User.Add(3, 3);
+                                user.User.Increase("earned", 3000);
                                 int charmID = Tools.GetCharm(_itemLists, 0, 9, _rand);
-                                await user.User.GainItem(charmID, 1);
+                                user.User.GainItem(charmID, 1);
                                 string currency = showEmoji switch { true => _currency[3], false => " **rubies**" };
                                 string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
                                 text.Add($"<@{user.User.ID}> earned 3{currency} + 1{charm1}");
                             }
                             break;
                         case 4:
-                            if (await Tools.CharmEffect(["LegendaryQuests"], _items, user) > 0)
+                            if (Tools.CharmEffect(["LegendaryQuests"], _items, user) > 0)
                             {
-                                await user.User.Add(1, 4);
-                                await user.User.Increase("earned", 10000);
+                                user.User.Add(1, 4);
+                                user.User.Increase("earned", 10000);
                                 int charmID = Tools.GetCharm(_itemLists, 1, 9, _rand);
-                                await user.User.GainItem(charmID, 1);
+                                user.User.GainItem(charmID, 1);
                                 string currency = showEmoji switch { true => _currency[4], false => " **ambers**" };
                                 string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
                                 int charmID2 = Tools.GetCharm(_itemLists, 1, 7, _rand);
-                                await user.User.GainItem(charmID2, 1);
+                                user.User.GainItem(charmID2, 1);
                                 string charm2 = showEmoji switch { true => _items[charmID2].Emoji, false => $" **{_items[charmID2].Name}**"};
                                 int charmID3 = Tools.GetCharm(_itemLists, 2, 17, _rand);
-                                await user.User.GainItem(charmID3, 1);
+                                user.User.GainItem(charmID3, 1);
                                 string charm3 = showEmoji switch { true => _items[charmID3].Emoji, false => $" **{_items[charmID3].Name}**"};
                                 text.Add($"<@{user.User.ID}> earned 1{currency} + 1{charm1} + 1{charm2} + 1{charm3}");
                             }
                             else
                             {
-                                await user.User.Add(1, 4);
-                                await user.User.Increase("earned", 10000);
+                                user.User.Add(1, 4);
+                                user.User.Increase("earned", 10000);
                                 int charmID = Tools.GetCharm(_itemLists, 1, 7, _rand);
-                                await user.User.GainItem(charmID, 1);
+                                user.User.GainItem(charmID, 1);
                                 string currency = showEmoji switch { true => _currency[4], false => " **ambers**" };
                                 string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
                                 text.Add($"<@{user.User.ID}> earned 1{currency} + 1{charm1}");
@@ -1327,11 +1377,12 @@ public class GemBot
             }
             embay.AddField(quest.Name, additionalInfo);
         }
+        await user.User.Save();
         return new Tuple<EmbedBuilder, List<string>>(embay, text);
     }
     private async Task DailyQuests(SocketSlashCommand command)
     {
-        for (int i= 0; i < (await Tools.CharmEffect(["betterAutoRefresh"], _items, await GetUser(command.User.Id))) switch {0 => 16, _ => (60*12)+1}; i++)
+        for (int i= 0; i < (Tools.CharmEffect(["betterAutoRefresh"], _items, await GetUser(command.User.Id))) switch {0 => 16, _ => (60*12)+1}; i++)
         {
             CachedUser cUser = await GetUser(command.User.Id);
             User user = cUser;
@@ -1358,7 +1409,7 @@ public class GemBot
                 await Task.Delay(500);
                 await command.FollowupAsync(toSend);
             }
-            await Task.Delay((await Tools.CharmEffect(["betterAutoRefresh"], _items, user)) switch {0 => 60000, _ => 4800});
+            await Task.Delay((Tools.CharmEffect(["betterAutoRefresh"], _items, user)) switch {0 => 60000, _ => 4800});
         }
     }
     private async Task Give(SocketSlashCommand command)
@@ -1382,15 +1433,15 @@ public class GemBot
                 await command.RespondAsync("You can't gift gems to yourself", ephemeral: true);
                 return;
             }
-            await main.Add(-amount, index);
-            await main.Increase("gifted", (int)(amount * Math.Pow(10, index)));
-            await main.Increase("commands", 1);
-            await target.Add(amount, index);
+            main.Add(-1*amount, index);
+            main.Increase("gifted", (int)(amount * Math.Pow(10, index)));
+            main.Increase("commands", 1);
+            target.Add(amount, index);
             bool emoj = Tools.ShowEmojis(command, Settings.BotID(), _client);
             EmbedBuilder embay = new EmbedBuilder()
                 .WithTitle("Transaction successful")
                 .WithFooter("GemBOT economy!")
-                .WithColor((uint)await main.GetSetting("uiColor", 3287295))
+                .WithColor((uint)main.GetSetting("uiColor", 3287295))
                 .WithDescription(
                     $"You have successfully transferred {amount}{(emoj switch { true => _currency, false => _currencyNoEmoji })[index]} from <@{main.ID}> to <@{target.ID}>");
             await command.RespondAsync($"Thank you for giving gems to <@{target.ID}>", embed: embay.Build());
@@ -1413,15 +1464,15 @@ public class GemBot
                 await command.RespondAsync("You can't gift items to yourself", ephemeral: true);
                 return;
             }
-            await main.GainItem(index, -amount);
-            await main.Increase("gifted", amount * _items[index].Value);
-            await main.Increase("commands", 1);
-            await target.GainItem(index, amount);
+            main.GainItem(index, -amount);
+            main.Increase("gifted", amount * _items[index].Value);
+            main.Increase("commands", 1);
+            target.GainItem(index, amount);
             bool emoj = Tools.ShowEmojis(command, Settings.BotID(), _client);
             EmbedBuilder embay = new EmbedBuilder()
                 .WithTitle("Item Gifting successful")
                 .WithFooter("GemBOT economy!")
-                .WithColor((uint)await target.GetSetting("uiColor", 3287295))
+                .WithColor((uint) target.GetSetting("uiColor", 3287295))
                 .WithDescription(
                     $"You have successfully gifted {amount}{emoj switch { true => _items[index].Emoji, false => $"  **{_items[index].Name}**" }} from <@{main.ID}> to <@{target.ID}>");
             await command.RespondAsync($"Thank you for giving items to <@{target.ID}>", embed: embay.Build());
@@ -1430,20 +1481,25 @@ public class GemBot
     private async Task Play(SocketSlashCommand command)
     {
         User user = await GetUser(command.User.Id);
-        if (await Tools.CharmEffect(["unlockPlay"], _items, user) <= 0)
+        if (Tools.CharmEffect(["unlockPlay"], _items, user) <= 0)
         {
             await command.RespondAsync("You need to have a controller to play video games in gemBOT.", ephemeral: true);
             return;
         }
-        int effect = await Tools.CharmEffect(["fasterCooldown", "positive"], _items, user);
+        int effect = Tools.CharmEffect(["fasterCooldown", "positive"], _items, user);
         uint timeoutFor = effect switch
         {
-            <= 0 => 45,
-            <= 40 => 45-(uint)effect/4,
-            <= 120 => 35-((uint)effect-40)/8,
-            <= 240 => 25-((uint)effect-120)/12,
-            <= 400 => 15-((uint)effect-240)/16,
-            <= 500 => 5-((uint)effect-400)/20,
+            <= 0 => 600,
+            <= 20 => 600-(uint)effect*3,
+            <= 50 => 540-((uint)effect-20)*2,
+            <= 110 => 480-((uint)effect-50),
+            <= 230 => 420-((uint)effect-110)/2,
+            <= 410 => 360-((uint)effect-230)/3,
+            <= 710 => 300-((uint)effect-410)/5,
+            <= 1190 => 240-((uint)effect-710)/8,
+            <= 1910 => 180-((uint)effect-1190)/12,
+            <= 3110 => 120-((uint)effect-1910)/20,
+            <= 5210 => 60-((uint)effect-3110)/35,
             _ => 0
         };
         if (await user.OnCoolDown("play", Tools.CurrentTime(), timeoutFor))
@@ -1488,8 +1544,8 @@ public class GemBot
             17 => "Did you know?: These represent a loading screen tip",
             18 => "TIP: The more gems you have, the more gems you have.",
             19 => "TIP: Items can be obtained",
-            20 => $"You rolled a {roll} and you have played video games {power} times.\nDid you know?: This references the roll variable despite it only occuring when roll variable is set to 20 in the switch statement.",
-            _ => "TIP: Did you know? This should never happen. If this does happen, please report this to a727 and you might get half a diamond\n(okay, fine, he'll have to give you one diamond) ||PRONOUNS REVEAL!!!||"
+            20 => $"You rolled a 20 and you have played video games {power} times.",
+            _ => "TIP: Did you know? This should never happen. If this does happen, please report this to a727 and you might get half a diamond\n(okay, fine, he'll have to give you one diamond)"
         };
         if (power <= 0)
         {
@@ -1504,14 +1560,14 @@ public class GemBot
         else if (power <= 2)
         {
             text = "You're still learning, but you got a single diamond";
-            await user.Add(1, 0);
-            await user.Increase("earned", 1);
+            user.Add(1, 0);
+            user.Increase("earned", 1);
         }
         else if (power <= 4)
         {
             text = "You're still learning, but you got two diamonds";
-            await user.Add(2, 0, false);
-            await user.Increase("earned", 2);
+            user.Add(2, 0);
+            user.Increase("earned", 2);
         }
         else if (power <= 8)
         {
@@ -1530,18 +1586,18 @@ public class GemBot
                 case 13 or 14 or 15 or 16:
                     text = "You got 3 viewers, and were able to make 1 diamond from the ad break."
                        + "\nHowever, the ad was another hero wars fake ad, and you lost all your viewers.";
-                    await user.Add(1, 0);
-                    await user.Increase("earned", 1);
+                    user.Add(1, 0);
+                    user.Increase("earned", 1);
                     break;
                 case 17 or 18 or 19:
                     text = "You got 5 viewers! You did an ad break! +2 diamonds!";
-                    await user.Add(2, 0);
-                    await user.Increase("earned", 2);
+                    user.Add(2, 0);
+                    user.Increase("earned", 2);
                     break;
                 case 20:
                     text = "You got 12 viewers! Some guy donated 3 diamonds!";
-                    await user.Add(3, 0);
-                    await user.Increase("earned", 3);
+                    user.Add(3, 0);
+                    user.Increase("earned", 3);
                     break;
             }
         }
@@ -1562,23 +1618,23 @@ public class GemBot
                 case 9 or 10 or 11 or 12 or 13 or 14:
                     text = "You got 3 viewers, and were able to make 1 diamond from the ad break."
                            + "\nHowever, the ad was another hero wars fake ad, and you lost all your viewers.";
-                    await user.Add(1, 0);
-                    await user.Increase("earned", 1);
+                    user.Add(1, 0);
+                    user.Increase("earned", 1);
                     break;
                 case 15 or 16 or 17:
                     text = "You got 5 viewers! You did an ad break! +2 diamonds!";
-                    await user.Add(2, 0);
-                    await user.Increase("earned", 2);
+                    user.Add(2, 0);
+                    user.Increase("earned", 2);
                     break;
                 case 18 or 19:
                     text = "You got 12 viewers! Some guy donated 3 diamonds!";
-                    await user.Add(3, 0);
-                    await user.Increase("earned", 3);
+                    user.Add(3, 0);
+                    user.Increase("earned", 3);
                     break;
                 case 20:
                     text = $"You somehow got 2{emeralds}";
-                    await user.Add(2, 1);
-                    await user.Increase("earned", 20);
+                    user.Add(2, 1);
+                    user.Increase("earned", 20);
                     break;
             }
         }
@@ -1599,45 +1655,45 @@ public class GemBot
                 case 7 or 8 or 9:
                     text = "You got 3 viewers, and were able to make 1 diamond from the ad break."
                        + "\nHowever, the ad was another hero wars fake ad, and you lost all your viewers.";
-                    await user.Add(1, 0);
-                    await user.Increase("earned", 1);
+                    user.Add(1, 0);
+                    user.Increase("earned", 1);
                     break;
                 case 10 or 11:
                     text = "You got 5 viewers! You did an ad break! +2 diamonds!";
-                    await user.Add(2, 0);
-                    await user.Increase("earned", 2);
+                    user.Add(2, 0);
+                    user.Increase("earned", 2);
                     break;
                 case 12:
                     text = "You got 12 viewers! Some guy donated 3 diamonds!";
-                    await user.Add(3, 0);
-                    await user.Increase("earned", 3);
+                    user.Add(3, 0);
+                    user.Increase("earned", 3);
                     break;
                 case 13:
                     text = "You got 12 viewers! two guys donated 4 diamonds each!";
-                    await user.Add(8, 0);
-                    await user.Increase("earned", 8);
+                    user.Add(8, 0);
+                    user.Increase("earned", 8);
                     break;
                 case 14:
                     text = $"You got 12 viewers! Somebody donated 20{diamonds}";
-                    await user.Add(20, 0);
-                    await user.Increase("earned", 20);
+                    user.Add(20, 0);
+                    user.Increase("earned", 20);
                     break;
                 case 15 or 16:
                     text = $"You got 25 viewers! You ran an ad break for 2{emeralds}";
-                    await user.Add(2, 1);
-                    await user.Increase("earned", 20);
+                    user.Add(2, 1);
+                    user.Increase("earned", 20);
                     break;
                 case 17 or 18 or 19:
                     text = $"You got 12 viewers! You ran 3 ad breaks, with one emerald each. Plus, somebody donated 2{diamonds}!"
                         + $"\nIn total:\n> 3{emeralds}\n> 2{diamonds}";
-                    await user.Add(3, 1);
-                    await user.Add(2, 0);
-                    await user.Increase("earned", 32);
+                    user.Add(3, 1);
+                    user.Add(2, 0);
+                    user.Increase("earned", 32);
                     break;
                 case 20:
                     text = $"You didn't live stream, but you got something rare in the game and sold it for 4{emeralds}";
-                    await user.Add(4, 1);
-                    await user.Increase("earned", 40);
+                    user.Add(4, 1);
+                    user.Increase("earned", 40);
                     break;
             }
         }
@@ -1678,10 +1734,10 @@ public class GemBot
                            $"\n> {roll} rng" +
                            $"\n> {adBreaks} ad breaks ({adbBeakMoney} diamonds each): {adBreaks*adbBeakMoney}{diamonds}" +
                            $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-                    await user.Add(adBreaks * adbBeakMoney, adBreakValue, false);
-                    await user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue), false);
-                    await user.Add(donated, 0, false);
-                    await user.Increase("earned", donated);
+                    user.Add(adBreaks * adbBeakMoney, adBreakValue);
+                    user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+                    user.Add(donated, 0);
+                    user.Increase("earned", donated);
                     break;
             }
         }
@@ -1706,10 +1762,10 @@ public class GemBot
                    $"\n> {roll} rng" +
                    $"\n> {adBreaks} ad breaks ({adbBeakMoney} diamonds each): {adBreaks*adbBeakMoney}{diamonds}" +
                    $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-            await user.Add(adBreaks * adbBeakMoney, adBreakValue, false);
-            await user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue), false);
-            await user.Add(donated, 0, false);
-            await user.Increase("earned", donated);
+            user.Add(adBreaks * adbBeakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(donated, 0);
+            user.Increase("earned", donated);
         }
         else if (power <= 256)
         {
@@ -1730,12 +1786,12 @@ public class GemBot
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
                    $"\n> {roll} rng" +
-                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} diamonds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
+                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} emeralds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
                    $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-            await user.Add(adBreaks * adbBeakMoney, adBreakValue, false);
-            await user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue), false);
-            await user.Add(donated, 0, false);
-            await user.Increase("earned", donated);
+            user.Add(adBreaks * adbBeakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(donated, 0);
+            user.Increase("earned", donated);
         }
         else if (power <= 512)
         {
@@ -1756,12 +1812,12 @@ public class GemBot
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
                    $"\n> {roll} rng" +
-                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} diamonds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
+                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} emeralds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
                    $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-            await user.Add(adBreaks * adbBeakMoney, adBreakValue, false);
-            await user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue), false);
-            await user.Add(donated, 0, false);
-            await user.Increase("earned", donated);
+            user.Add(adBreaks * adbBeakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(donated, 0);
+            user.Increase("earned", donated);
         }
         else if (power <= 1024)
         {
@@ -1782,12 +1838,12 @@ public class GemBot
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
                    $"\n> 2{roll} rng" +
-                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} diamonds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
+                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} emeralds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
                    $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-            await user.Add(adBreaks * adbBeakMoney, adBreakValue, false);
-            await user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue), false);
-            await user.Add(donated, 0, false);
-            await user.Increase("earned", donated);
+            user.Add(adBreaks * adbBeakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(donated, 0);
+            user.Increase("earned", donated);
         }
         else if (power <= 2048)
         {
@@ -1808,12 +1864,12 @@ public class GemBot
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
                    $"\n> {roll} rng" +
-                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} diamonds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
+                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} sapphires each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
                    $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-            await user.Add(adBreaks * adbBeakMoney, adBreakValue, false);
-            await user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue), false);
-            await user.Add(donated, 0, false);
-            await user.Increase("earned", donated);
+            user.Add(adBreaks * adbBeakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(donated, 0);
+            user.Increase("earned", donated);
         }
         else
         {
@@ -1834,19 +1890,20 @@ public class GemBot
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
                    $"\n> {roll} rng" +
-                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} diamonds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
+                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} sapphires each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
                    $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-            await user.Add(adBreaks * adbBeakMoney, adBreakValue, false);
-            await user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue), false);
-            await user.Add(donated, 0, false);
-            await user.Increase("earned", donated);
+            user.Add(adBreaks * adbBeakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(donated, 0);
+            user.Increase("earned", donated);
         }
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle(header)
             .WithDescription(text)
             .WithFooter(footer)
-            .WithColor((uint)await user.GetSetting("uiColor", 3287295));
+            .WithColor((uint) user.GetSetting("uiColor", 3287295));
         await command.RespondAsync(embed: embay.Build());
+        await user.Save();
     }
     private async Task<Tuple<bool, string, Embed, MessageComponent, string>> MineRaw(ulong userId, bool showEmojis)
     {
@@ -1861,26 +1918,26 @@ public class GemBot
             return new Tuple<bool, string, Embed, MessageComponent, string>(false, "Missing Use External Emojis Permission", embayError.Build(), new ComponentBuilder().WithButton("Error", "error", ButtonStyle.Danger, disabled: true).Build(), "no debug info");
         }
         int mineMonth = DateTime.Today.Month;
-        if (await user.GetData("MineMonth", mineMonth) != mineMonth)
+        if (user.GetData("MineMonth", mineMonth) != mineMonth)
         {
-            await user.SetData("MineMonth", mineMonth, false);
-            await user.SetData("mineY", 0, false);
-            await user.SetData("mineX", _rand.Next(_mineData.MineChunks.Count * 20), false);
-            await user.SetData("mining", 0);
+            user.SetData("MineMonth", mineMonth);
+            user.SetData("mineY", 0);
+            user.SetData("mineX", _rand.Next(_mineData.MineChunks.Count * 20));
+            user.SetData("mining", 0);
         }
-        string description = await user.GetData("mining", 0) switch
+        string description = user.GetData("mining", 0) switch
         {
             0 => "Click any button to start mining!",
             1 => "You are currently mining a block.",
             _ => "Your data doesn't seem to be saved correctly."
         };
-        int mineY = await user.GetData("mineY", 0);
+        int mineY = user.GetData("mineY", 0);
         int top = mineY-2;
         if (top <= 0)
         {
             top = 0;
         }
-        int mineX = await user.GetData("mineX", _rand.Next(_mineData.MineChunks.Count * 20));
+        int mineX = user.GetData("mineX", _rand.Next(_mineData.MineChunks.Count * 20));
         int left = mineX-2;
         if (left <= 0)
         {
@@ -1906,7 +1963,7 @@ public class GemBot
                 ButtonBuilder button = new ButtonBuilder();
                 int y = top + i;
                 int x = left + j;
-                button.WithCustomId($"mine-{x}|{y}|{await user.GetData("MineMonth", mineMonth)}");
+                button.WithCustomId($"mine-{x}|{y}|{user.GetData("MineMonth", mineMonth)}");
                 blocks += " ";
                 blocks += button.CustomId;
                 MineBlock block = _mineData.GetBlock(x, y);
@@ -1948,10 +2005,49 @@ public class GemBot
                         button.WithStyle(ButtonStyle.Success)
                             .WithEmote(Emote.Parse(_currency[4]));
                         break;
+                    case BlockType.DiamondCoin:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[0].Emoji));
+                        break;
+                    case BlockType.EmeraldCoin:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[1].Emoji));
+                        break;
+                    case BlockType.SapphireCoin:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[2].Emoji));
+                        break;
+                    case BlockType.RubyCoin:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[3].Emoji));
+                        break;
+                    case BlockType.AmberCoin:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[4].Emoji));
+                        break;
+                    case BlockType.DiamondKey:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[16].Emoji));
+                        break;
+                    case BlockType.EmeraldKey:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[17].Emoji));
+                        break;
+                    case BlockType.SapphireKey:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[18].Emoji));
+                        break;
+                    case BlockType.RubyKey:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[19].Emoji));
+                        break;
+                    case BlockType.AmberKey:
+                        button.WithStyle(ButtonStyle.Success)
+                            .WithEmote(Emote.Parse(_items[20].Emoji));
+                        break;
                     default:
                         button.WithStyle(ButtonStyle.Danger)
-                            .WithEmote(Emote.Parse("<:stone:1287086951215796346>"))
-                            .WithLabel("Glitched Block");
+                            .WithEmote(Emote.Parse("<:stone:1287086951215796346>"));
                         break;
                 }
                 row.AddComponent(button.Build());
@@ -1963,6 +2059,7 @@ public class GemBot
             .WithDescription(description)
             .WithFooter("Click any button to mine that location!")
             .Build();
+        await user.Save();
         return new Tuple<bool, string, Embed, MessageComponent, string>(true, "Mine", embay, buttons.Build(), blocks);
     }
     private async Task Mine(SocketSlashCommand command)
@@ -1978,8 +2075,8 @@ public class GemBot
     private async Task<Tuple<string, Embed, MessageComponent>> FurnacesRaw(ulong userId, bool emoj)
     {
         User user = await GetUser(userId);
-        int craftSlots = await Tools.CharmEffect(["FurnaceSlots"], _items, user) + FurnaceConst;
-        await user.CheckFurnaces(craftSlots);
+        int craftSlots = Tools.CharmEffect(["FurnaceSlots"], _items, user) + FurnaceConst;
+        user.CheckFurnaces(craftSlots);
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle("Craft!")
             .WithDescription("View your current crafting slots, and click on the buttons to craft new things!");
@@ -2006,14 +2103,14 @@ public class GemBot
             .WithButton("Recents", "craft-page|recent", ButtonStyle.Success);
         ActionRowBuilder craftable = new ActionRowBuilder()
             .WithButton("Max Craftable", "craft-page|craftable", ButtonStyle.Success);
-        List<int> faveRecipes = await user.GetListData("craft_favorites");
+        List<int> faveRecipes = user.GetListData("craft_favorites");
         for (int i = 0; i < 4 && i < faveRecipes.Count; i++)
         {
             Item crafted = _items[_craftingRecipes[faveRecipes[i]].ItemCrafted];
             favorites.WithButton(new ButtonBuilder().WithLabel(crafted.Name).WithStyle(ButtonStyle.Primary)
                 .WithEmote(Emote.Parse(crafted.Emoji)).WithCustomId($"craft-recipe|{faveRecipes[i]}|f"));
         }
-        List<int> recentRecipes = await user.GetListData("craft_recents");
+        List<int> recentRecipes = user.GetListData("craft_recents");
         for (int i = 0; i < 4 && i < recentRecipes.Count; i++)
         {
             Item crafted = _items[_craftingRecipes[recentRecipes[i]].ItemCrafted];
@@ -2039,6 +2136,7 @@ public class GemBot
         components.AddRow(favorites);
         components.AddRow(recents);
         components.AddRow(craftable);
+        await user.Save();
         return new Tuple<string, Embed, MessageComponent>("Crafting text:", embay.Build(), components.Build());
     }
     private async Task Craft(SocketSlashCommand command)
@@ -2051,9 +2149,47 @@ public class GemBot
         User user = await GetUser(userID);
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle("Drops")
-            .WithDescription("View all the currently active drops ||or the oldest 5 sets that haven't sold out, if there are more than that - the rest are locked to everybody||")
-            .WithColor(new Color((uint) await user.GetSetting("uiColor", 3287295)));
+            .WithDescription("View all the currently active drops\n > ||You're locked to 5 sets due to discord restrictions||")
+            .WithColor(new Color((uint) user.GetSetting("uiColor", 3287295)));
         ComponentBuilder components = new ComponentBuilder();
+        ActionRowBuilder tokenShop = new ActionRowBuilder();
+        int tokens = 1;
+        for (int i = 0; i < 5; i++)
+        {
+            if (_tokenShop.PurchasedReward(user.ID, i)) continue;
+            DailyTokenRewards rewards = _tokenShop.Rewards[i];
+            string rewardString = string.Empty;
+            foreach (DailyTokenReward reward in rewards.Rewards)
+            {
+                switch (reward.Type)
+                {
+                    case DailyTokenRewardType.None:
+                        Console.WriteLine("Bugged daily token shop: DailyTokenRewardType.None found");
+                        break;
+                    case DailyTokenRewardType.Money:
+                        if (rewardString != string.Empty) rewardString += "\n";
+                        rewardString += $" > {reward.Amount}{_currency[i]}";
+                        break;
+                    case DailyTokenRewardType.Items:
+                        if (reward is DailyTokenRewardItem rewardItem)
+                        {
+                            if (rewardString != string.Empty) rewardString += "\n";
+                            rewardString += $" > {rewardItem.Amount}{_items[rewardItem.Item].Emoji}";
+                            break;
+                        }
+                        Console.WriteLine("Bugged daily token shop: DailyTokenRewardType.Items is not a member of DailyTokenRewardItem");
+                        break;
+                    default:
+                        Console.WriteLine("Bugged daily token shop: reward does not have a valid type");
+                        break;
+                }
+            }
+            if (rewardString.Length <= 0) continue;
+            embay.AddField($"Exchange {tokens}{_items[21].Emoji} For:", rewardString+"\n > *new rewards daily*");
+            tokenShop.WithButton($"x{tokens}", $"exchange-token|{i}", ButtonStyle.Primary, Emoji.Parse(_items[21].Emoji));
+            tokens *= 10;
+        }
+        if (tokenShop.Components.Count > 0) components.AddRow(tokenShop);
         foreach (Drop drop in _drops)
         {
             if (!drop.Published) continue;
@@ -2076,7 +2212,7 @@ public class GemBot
                 {
                     emote = Emoji.Parse(item.Emoji);
                 }
-                row.WithButton($"Buy for {drop.Price[i][0]} {_currencyNoEmojiNoFormatting[drop.Price[i][1]]}", $"drop-buy|{drop.DropID}|{i}|{emoj}", ButtonStyle.Secondary, emote: emote);
+                row.WithButton($"Buy", $"drop-page|{drop.DropID}|{i}", ButtonStyle.Secondary, emote: emote);
             }
             components.AddRow(row);
             if (components.ActionRows.Count >= 5) break;
@@ -2097,88 +2233,366 @@ public class GemBot
     private async Task Spin(SocketSlashCommand command)
     {
         int spinID = (int)(long)command.Data.Options.First().Value;
+        int amount = command.Data.Options.Count < 2 ? 1: (int)(long)command.Data.Options.ToArray()[1].Value;
         User user = await GetUser(command.User.Id);
         EmbedBuilder embay = new EmbedBuilder().WithTitle("Spin Results:");
-        if (user.Inventory[spinID] <= 0)
+        if (user.Inventory[spinID] < amount)
         {
-            await command.RespondAsync("You don't have the required item for this.", ephemeral: true);
+            await command.RespondAsync("You don't have the required item(s) for this.", ephemeral: true);
             return;
         }
-        int roll = _rand.Next(100) + 1; //From 1 to 100
-        await user.GainItem(spinID, -1);
-        switch (roll)
+        int coinsGained = 0;
+        int[] itemsGained = new int[user.Inventory.Count];
+        for (int i = 0; i < amount; i++)
         {
-            case <= 30:
-                //Gain 4 of currency (30%)
-                embay.WithDescription($"You got 4{_currency[spinID]}");
-                embay.WithFooter("There is a 30% chance of this happening");
-                await user.Add(4, spinID);
-                await command.RespondAsync(embed: embay.Build());
-                break;
-            case <= 63:
-                //Gain 6 of currency (33%)
-                embay.WithDescription($"You got 6{_currency[spinID]}");
-                embay.WithFooter("There is a 33% chance of this happening");
-                await user.Add(6, spinID);
-                await command.RespondAsync(embed: embay.Build());
-                break;
-            case <= 89:
-                //Gain a charm (25%)
-                int charmID = Tools.GetCharm(_itemLists, spinID, 12, _rand);
-                await user.GainItem(charmID, 1);
-                embay.WithDescription($"You got 1{_items[charmID].Emoji}!");
-                embay.WithFooter("There is a 25% chance of this happening");
-                await command.RespondAsync(embed: embay.Build());
-                break;
-            case <= 92:
-                //Gain 9^rarity tickets (4%)
-                int ticketAmount = (int)Math.Pow(9, spinID);
-                await user.GainItem(21, ticketAmount);
-                embay.WithDescription($"You got {ticketAmount}{_items[21].Emoji}!");
-                embay.WithFooter("There is a 4% chance of this happening");
-                await command.RespondAsync(embed: embay.Build());
-                break;
-            case <= 95:
-                //Gain 100 of currency (3%)
-                embay.WithDescription($"You got 100{_currency[spinID]}");
-                embay.WithFooter("There is a 3% chance of this happening");
-                await user.Add(100, spinID);
-                await command.RespondAsync(embed: embay.Build());
-                break;
-            case <= 97:
-                //Gain 5 x current coin (2%)
-                await user.GainItem(spinID, 5);
-                embay.WithDescription($"You got 5{_items[spinID].Emoji}!");
-                embay.WithFooter("There is a 2% chance of this happening");
-                await command.RespondAsync(embed: embay.Build());
-                break;
-            case <= 99:
-                //Gain 1x key (2%)
-                await user.GainItem(spinID + 16, 1);
-                embay.WithDescription($"You got 1{_items[spinID + 16].Emoji}!");
-                embay.WithFooter("There is a 2% change of this happening");
-                await command.RespondAsync(embed: embay.Build());
-                break;
-            case >= 100:
-                //Gain next level coin (1%)
-                embay.WithFooter("There is a 1% chance of this happening");
-                //Amber has separate logic
-                if (spinID == 4)
+            int roll = _rand.Next(100) + 1; //From 1 to 100
+            switch (spinID)
+            {
+                case < 5:
+                    user.GainItem(spinID, -1);
+                    switch (roll)
+                    {
+                        case <= 13:
+                            //Gain 3 of currency (13%)
+                            coinsGained += 3;
+                            break;
+                        case <= 43:
+                            //Gain 4 of currency (30%)
+                            coinsGained += 4;
+                            break;
+                        case <= 66:
+                            //Gain 6 of currency (23%)
+                            coinsGained += 6;
+                            break;
+                        case <= 88:
+                            //Gain a charm (22%)
+                            itemsGained[Tools.GetCharm(_itemLists, spinID, 12, _rand)]++;
+                            break;
+                        case <= 92:
+                            //Gain 9^rarity tickets (4%)
+                            itemsGained[21] += (int)Math.Pow(9, spinID);
+                            break;
+                        case <= 95:
+                            //Gain 100 of currency (3%)
+                            coinsGained += 100;
+                            break;
+                        case <= 97:
+                            //Gain 5 x current coin (2%)
+                            itemsGained[spinID] += 5;
+                            break;
+                        case <= 99:
+                            //Gain 1x key (2%)
+                            itemsGained[spinID + 16] += 1;
+                            break;
+                        case >= 100:
+                            //Gain next level coin (1%)
+                            //Amber has separate logic
+                            if (spinID == 4)
+                            {
+                                itemsGained[4] += 5;
+                                itemsGained[3] += 45;
+                                itemsGained[2] += 400;
+                                itemsGained[1] += 3750;
+                                itemsGained[0] += 35000;
+                                break;
+                            }
+                            itemsGained[spinID + 1] += 1;
+                            break;
+                    }
+                    break;
+            }
+            
+        }
+        user.Add(coinsGained, spinID);
+        user.Increase("earned", coinsGained * (int)Math.Pow(10, spinID));
+        string rewards = coinsGained > 0 ? $"You earned:\n > {coinsGained}{_currency[spinID]}": "You earned:";
+        for (int i = 0; i < itemsGained.Length; i++)
+        {
+            if (itemsGained[i] <= 0) continue;
+            user.GainItem(i, itemsGained[i]);
+            rewards += $"\n > {itemsGained[i]}{_items[i].Emoji}";
+        }
+        embay.WithDescription(rewards);
+        await command.RespondAsync(embed: embay.Build());
+        await user.Save();
+    }
+    private async Task Notifications(SocketSlashCommand command)
+    {
+        CachedUser user = await GetUser(command.User.Id);
+        user.NotificationsID++;
+        List<Embed> embeds = [];
+        int notificationPoint = 1;
+        EmbedBuilder current = new EmbedBuilder().WithTitle("Notifications");
+        string curField = string.Empty;
+        int notificationsAmount = 0;
+        foreach (string notification in user.Notifications)
+        {
+            if ((curField.Length + notification.Length) > EmbedFieldBuilder.MaxFieldValueLength)
+            {
+                if (embeds.Count >= 10)
                 {
-                    await user.GainItem(4, 5, false);
-                    await user.GainItem(3, 20, false);
-                    await user.GainItem(2, 150, false);
-                    await user.GainItem(1, 1000, false);
-                    await user.GainItem(0, 9999, false);
-                    embay.WithDescription($"You got 5{_items[4].Emoji} + 20{_items[3].Emoji} + 150{_items[2].Emoji} + 1000{_items[1].Emoji} + 9999{_items[0].Emoji}!");
-                    await command.RespondAsync(embed: embay.Build());
                     break;
                 }
-                await user.GainItem(spinID + 1, 1);
-                embay.WithDescription($"You got 1{_items[spinID + 1].Emoji}!");
-                await command.RespondAsync(embed: embay.Build());
+                if (current.Fields.Count >= 4)
+                {
+                    embeds.Add(current.Build());
+                    current = new EmbedBuilder().WithTitle("Notifications");
+                }
+                current.AddField($"Notifications {notificationPoint}", curField);
+                curField = string.Empty;
+                if (current.Fields.Count >= 4)
+                {
+                    embeds.Add(current.Build());
+                    current = new EmbedBuilder().WithTitle("Notifications");
+                }
+                notificationPoint++;
+                if (embeds.Count >= 10)
+                {
+                    break;
+                }
+            }
+            if (curField != string.Empty) curField += "\n";
+            curField += notification;
+            notificationsAmount++;
+        }
+        string text = $"View all ({notificationsAmount}) your notifications";
+        if (embeds.Count == 10)
+        {
+            text = $"You have more notifications than this... Showing first {notificationsAmount} of {user.Notifications.Count}.";
+        }
+        else
+        {
+            if (curField != string.Empty)
+            {
+                current.AddField($"Notifications {notificationPoint}", curField);
+            }
+            if (current.Fields.Count > 0)
+            {
+                embeds.Add(current.Build());
+            }
+        }
+        await command.RespondAsync(text, embeds: embeds.ToArray(), 
+            components: new ComponentBuilder()
+                .WithButton("Delete Notifications",
+                    $"notifications-clear|{user.NotificationsID}|{notificationsAmount}",
+                    ButtonStyle.Secondary,
+                    Emoji.Parse(":x:"))
+                .Build());
+    }
+    private async Task Key(SocketSlashCommand command)
+    {
+        string key = command.Data.Options.First().Name;
+        User user = await GetUser(command.User.Id);
+        switch (key)
+        {
+            case "diamond":
+                if (user.Inventory[16] <= 0)
+                {
+                    await command.RespondAsync("You don't have a diamond key", ephemeral: true);
+                    return;
+                }
+                await command.RespondAsync($"<@{command.User.Id}>, what value would you like to convert your currency to?\n > Diamond keys automatically convert currency at the best available rates (see `/bank`)",
+                    components: new ComponentBuilder()
+                        .WithButton(customId: "key-diamond|0", style: ButtonStyle.Primary, emote: Emote.Parse(_currency[0]))
+                        .WithButton(customId: "key-diamond|1", style: ButtonStyle.Primary, emote: Emote.Parse(_currency[1]))
+                        .WithButton(customId: "key-diamond|2", style: ButtonStyle.Primary, emote: Emote.Parse(_currency[2]))
+                        .WithButton(customId: "key-diamond|3", style: ButtonStyle.Primary, emote: Emote.Parse(_currency[3]))
+                        .WithButton(customId: "key-diamond|4", style: ButtonStyle.Primary, emote: Emote.Parse(_currency[4]))
+                        .WithButton("Cancel", "basic-cancel|auto_delete", style: ButtonStyle.Secondary)
+                        .Build(),
+                    ephemeral:true);
+                break;
+            case "emerald":
+                if (user.Inventory[17] <= 0)
+                {
+                    await command.RespondAsync("You don't have an emerald key", ephemeral:true);
+                    return;
+                }
+                await command.RespondAsync($"<@{command.User.Id}>, would you like to use an emerald key?\n > You will receive two charms, at rates `4|0` and `3|0`",
+                    components:new ComponentBuilder()
+                        .WithButton("yes", "key-emerald|use", style: ButtonStyle.Success)
+                        .WithButton("no", "basic-cancel|auto_delete", style: ButtonStyle.Danger)
+                        .Build(),
+                    ephemeral:true);
+                break;
+            case "sapphire":
+                if (user.Inventory[18] <= 0)
+                {
+                    await command.RespondAsync("You don't have a sapphire key.", ephemeral: true);
+                    return;
+                }
+                await command.RespondAsync($"<@{command.User.Id}>, would you like to use a sapphire key?\n > You will receive eight charms, at rates `4|0`, `4|0`, `4|0`, `3|0`, `3|0`, `3|1`, `3|1`, and `4|2`.",
+                    components:new ComponentBuilder()
+                        .WithButton("yes", "key-sapphire|use", style: ButtonStyle.Success)
+                        .WithButton("no", "basic-cancel|auto_delete", style: ButtonStyle.Danger)
+                        .Build(),
+                    ephemeral:true);
+                break;
+            case "ruby":
+                if (user.Inventory[19] <= 0)
+                {
+                    await command.RespondAsync("You don't have a ruby key.", ephemeral: true);
+                    return;
+                }
+                await command.RespondAsync($"This feature is in development", ephemeral: true);
+                break;
+            case "amber":
+                if (user.Inventory[20] <= 0)
+                {
+                    await command.RespondAsync("You don't have an amber key.", ephemeral: true);
+                    return;
+                }
+                await command.RespondAsync($"This feature is in development", ephemeral: true);
+                break;
+            default:
+                await command.RespondAsync($"Key {key} not found.", ephemeral: true);
                 break;
         }
+    }
+    private async Task CharmsToCoins(SocketSlashCommand command)
+    {
+        User user = await GetUser(command.User.Id);
+        
+        List<Tuple<int, int>> diamondConvert = new List<Tuple<int, int>>();
+        int diamondTotal = 0;
+        foreach (int item in _itemLists["CommonCharms"].Where(item => user.Inventory[item] >= 2))
+        {
+            diamondConvert.Add(new Tuple<int, int>(item, user.Inventory[item] -1));
+            diamondTotal += user.Inventory[item] - 1;
+        }
+        List<Tuple<int, int>> emeraldConvert = new List<Tuple<int, int>>();
+        int emeraldTotal = 0;
+        foreach (int item in _itemLists["UncommonCharms"].Where(item => user.Inventory[item] >= 2))
+        {
+            emeraldConvert.Add(new Tuple<int, int>(item, user.Inventory[item] -1));
+            emeraldTotal += user.Inventory[item] - 1;
+        }
+        List<Tuple<int, int>> sapphireConvert = new List<Tuple<int, int>>();
+        int sapphireTotal = 0;
+        foreach (int item in _itemLists["RareCharms"].Where(item => user.Inventory[item] >= 2))
+        {
+            sapphireConvert.Add(new Tuple<int, int>(item, user.Inventory[item] -1));
+            sapphireTotal += user.Inventory[item] - 1;
+        }
+        List<Tuple<int, int>> rubyConvert = new List<Tuple<int, int>>();
+        int rubyTotal = 0;
+        foreach (int item in _itemLists["EpicCharms"].Where(item => user.Inventory[item] >= 2))
+        {
+            rubyConvert.Add(new Tuple<int, int>(item, user.Inventory[item] -1));
+            rubyTotal += user.Inventory[item] - 1;
+        }
+        List<Tuple<int, int>> amberConvert = new List<Tuple<int, int>>();
+        int amberTotal = 0;
+        foreach (int item in _itemLists["LegendaryCharms"].Where(item => user.Inventory[item] >= 2))
+        {
+            amberConvert.Add(new Tuple<int, int>(item, user.Inventory[item] -1));
+            amberTotal += user.Inventory[item] - 1;
+        }
+        
+        EmbedBuilder embay = new EmbedBuilder()
+            .WithTitle("Exchange")
+            .WithDescription("Use the buttons below to exchange duplicate charms for coins.\n 1 charm + 1 gem of same rarity = 2 coins of same rarity");
+        ActionRowBuilder mainRow = new ActionRowBuilder();
+        
+        string diamondExchange = $"Gain {diamondTotal*2}{_items[0].Emoji} for \n > {diamondTotal}{_currency[0]}";
+        foreach (Tuple<int, int> pair in diamondConvert)
+        {
+            diamondExchange += $"\n > {pair.Item2}{_items[pair.Item1].Emoji}";
+        }
+        string emeraldExchange = $"Gain {emeraldTotal*2}{_items[1].Emoji} for \n > {emeraldTotal}{_currency[1]}";
+        foreach (Tuple<int, int> pair in emeraldConvert)
+        {
+            emeraldExchange += $"\n > {pair.Item2}{_items[pair.Item1].Emoji}";
+        }
+        string sapphireExchange = $"Gain {sapphireTotal*2}{_items[2].Emoji} for \n > {sapphireTotal}{_currency[2]}";
+        foreach (Tuple<int, int> pair in sapphireConvert)
+        {
+            sapphireExchange += $"\n > {pair.Item2}{_items[pair.Item1].Emoji}";
+        }
+        string rubyExchange = $"Gain {rubyTotal*2}{_items[3].Emoji} for \n > {rubyTotal}{_currency[3]}";
+        foreach (Tuple<int, int> pair in rubyConvert)
+        {
+            rubyExchange += $"\n > {pair.Item2}{_items[pair.Item1].Emoji}";
+        }
+        string amberExchange = $"Gain {amberTotal*2}{_items[4].Emoji} for \n > {amberTotal}{_currency[4]}";
+        foreach (Tuple<int, int> pair in amberConvert)
+        {
+            amberExchange += $"\n > {pair.Item2}{_items[pair.Item1].Emoji}";
+        }
+
+        if (diamondTotal > 0)
+        {
+            embay.AddField("Diamond Exchange", diamondExchange);
+            mainRow.WithButton($"x{diamondTotal*2}", $"exchange-charm|0", ButtonStyle.Primary, Emote.Parse(_items[0].Emoji));
+        }
+        if (emeraldTotal > 0)
+        {
+            embay.AddField("Emerald Exchange", emeraldExchange);
+            mainRow.WithButton($"x{emeraldTotal*2}", $"exchange-charm|1", ButtonStyle.Primary, Emote.Parse(_items[1].Emoji));
+        }
+        if (sapphireTotal > 0)
+        {
+            embay.AddField("Sapphire Exchange", sapphireExchange);
+            mainRow.WithButton($"x{sapphireTotal*2}", $"exchange-charm|2", ButtonStyle.Primary, Emote.Parse(_items[2].Emoji));
+        }
+        if (rubyTotal > 0)
+        {
+            embay.AddField("Ruby Exchange", rubyExchange);
+            mainRow.WithButton($"x{rubyTotal*2}", $"exchange-charm|3", ButtonStyle.Primary, Emote.Parse(_items[3].Emoji));
+        }
+        if (amberTotal > 0)
+        {
+            embay.AddField("Amber Exchange", amberExchange);
+            mainRow.WithButton($"x{amberTotal*2}", $"exchange-charm|4", ButtonStyle.Primary, Emote.Parse(_items[4].Emoji));
+        }
+
+        ComponentBuilder components = new ComponentBuilder()
+            .AddRow(mainRow)
+            .AddRow(new ActionRowBuilder().WithButton("cancel", "basic-cancel", ButtonStyle.Secondary));
+        await command.RespondAsync(embed: embay.Build(), components:components.Build(), ephemeral:true);
+        while (true)
+        {
+            await Task.Delay(2500);
+            bool changed = false;
+            foreach (Tuple<int, int> pair in diamondConvert)
+            {
+                if (user.Inventory[pair.Item1] == pair.Item2 + 1) continue;
+                changed = true;
+                break;
+            }
+            foreach (Tuple<int, int> pair in emeraldConvert)
+            {
+                if (user.Inventory[pair.Item1] == pair.Item2 + 1) continue;
+                changed = true;
+                break;
+            }
+            foreach (Tuple<int, int> pair in sapphireConvert)
+            {
+                if (user.Inventory[pair.Item1] == pair.Item2 + 1) continue;
+                changed = true;
+                break;
+            }
+            foreach (Tuple<int, int> pair in rubyConvert)
+            {
+                if (user.Inventory[pair.Item1] == pair.Item2 + 1) continue;
+                changed = true;
+                break;
+            }
+            foreach (Tuple<int, int> pair in amberConvert)
+            {
+                if (user.Inventory[pair.Item1] == pair.Item2 + 1) continue;
+                changed = true;
+                break;
+            }
+            if (diamondConvert.Count == 0 && emeraldConvert.Count == 0 &&
+                sapphireConvert.Count == 0 && rubyConvert.Count == 0 && amberConvert.Count == 0)
+            {
+                await Task.Delay(30000);
+                break;
+            }
+            if (changed) break;
+        }
+        await (await command.GetOriginalResponseAsync()).DeleteAsync();
     }
     
     
@@ -2187,7 +2601,7 @@ public class GemBot
         ulong id = component.User.Id;
         try
         {
-            await ((User)await GetUser(id)).ItemAmount(_items.Count - 1);
+            ((User)await GetUser(id)).ItemAmount(_items.Count - 1);
         }
         catch
         {
@@ -2245,10 +2659,14 @@ public class GemBot
         int type = transaction / 4;
         int upgradeFor = 11;
         int downgradeTo = 9;
-        if (await Tools.CharmEffect(["BetterBankTrades"], _items, user) >= 1)
+        int upgradeForB = 105;
+        int downgradeToB = 95;
+        if (Tools.CharmEffect(["BetterBankTrades"], _items, user) >= 1)
         {
             upgradeFor = 10;
             downgradeTo = 10;
+            upgradeForB = 100;
+            downgradeToB = 100;
         }
 
         switch (type)
@@ -2262,8 +2680,9 @@ public class GemBot
                     return;
                 }
 
-                await user.Add(-1 * upgradeFor, bottomValue, false);
-                await user.Add(1, bottomValue + 1);
+                user.Add(-1 * upgradeFor, bottomValue);
+                user.Add(1, bottomValue + 1);
+                await user.Save();
                 break;
             case 1:
                 if (user.Gems[bottomValue + 1] < 1)
@@ -2273,14 +2692,39 @@ public class GemBot
                     await component.DeleteOriginalResponseAsync();
                     return;
                 }
+                user.Add(-1, bottomValue + 1);
+                user.Add(downgradeTo, bottomValue);
+                await user.Save();
+                break;
+            case 2:
+                if (user.Gems[bottomValue] < upgradeForB)
+                {
+                    await component.RespondAsync($"You can't afford this trade. This message will auto-delete in <t:{Tools.CurrentTime()+8}:R>", ephemeral: true);
+                    await Task.Delay(7800);
+                    await component.DeleteOriginalResponseAsync();
+                    return;
+                }
 
-                await user.Add(-1, bottomValue + 1, false);
-                await user.Add(downgradeTo, bottomValue);
+                user.Add(-1 * upgradeForB, bottomValue);
+                user.Add(10, bottomValue + 1);
+                await user.Save();
+                break;
+            case 3:
+                if (user.Gems[bottomValue + 1] < 10)
+                {
+                    await component.RespondAsync($"You can't afford this trade. This message will auto-delete in <t:{Tools.CurrentTime()+8}:R>", ephemeral: true);
+                    await Task.Delay(7800);
+                    await component.DeleteOriginalResponseAsync();
+                    return;
+                }
+                user.Add(-10, bottomValue + 1);
+                user.Add(downgradeToB, bottomValue);
+                await user.Save();
                 break;
         }
 
         //step 2: refresh bank if original user, otherwise send message.
-        if (component.Message.Interaction.User.Id != user.ID)
+        if (!Tools.VerifyOriginalUse(component))
         {
             await component.RespondAsync(await BalanceRaw(showEmojis, component.User.Id, "The transaction was completed successfully!\n**Your balance**:") + $"\n||This message will auto-delete in <t:{Tools.CurrentTime() + 15}:R>||");
             await Task.Delay(1490);
@@ -2302,7 +2746,7 @@ public class GemBot
         string[] temp = settings.Split("|");
         if (temp.Length < 3) throw new ButtonValueError();
         User user = await GetUser(component.User.Id);
-        if (component.Message.Interaction.User.Id != user.ID)
+        if (!Tools.VerifyOriginalUse(component))
         {
             await component.RespondAsync("This is not your mine page! Use /mine to see your options!", ephemeral: true);
             return;
@@ -2333,16 +2777,17 @@ public class GemBot
             throw new ButtonValueError();
         }
         MineBlock block = _mineData.GetBlock(x, y);
-        if (await user.GetData("mining", 0) == 1)
+        if (user.GetData("mining", 0) == 1)
         {
-            block = _mineData.GetBlock(await user.GetData("miningAtX", x, false), await user.GetData("miningAtY", y, false));
+            block = _mineData.GetBlock(user.GetData("miningAtX", x), user.GetData("miningAtY", y));
             string progressBar = Tools.ProgressBar((int)block.Durability - (block.Left ?? block.GetLeft()), (int)block.Durability);
             if ((block.Left ?? block.GetLeft()) == 0)
             {
-                await user.SetData("mining", 0);
+                user.SetData("mining", 0);
+                await user.Save();
             }
             string etl;
-            int secondsLeft = (block.Left ?? block.GetLeft())/(5+ await Tools.CharmEffect(["minePower"], _items, user));
+            int secondsLeft = (block.Left ?? block.GetLeft())/(5+Tools.CharmEffect(["minePower"], _items, user));
             switch (secondsLeft)
             {
                 case > 86400:
@@ -2381,15 +2826,15 @@ public class GemBot
                     break;
             }
             await component.RespondAsync($"You are already mining; you cannot start mining another block.\n > **Progress**: {progressBar}\n > **Estimated Time Remaining**: {etl}", ephemeral: true);
-            if (await Tools.CharmEffect(["betterAutoRefresh"], _items, user) == 0) {return;}
-            block = _mineData.GetBlock(await user.GetData("miningAtX", x, false), await user.GetData("miningAtY", y, false));
+            if (Tools.CharmEffect(["betterAutoRefresh"], _items, user) == 0) {return;}
+            block = _mineData.GetBlock(user.GetData("miningAtX", x), user.GetData("miningAtY", y));
             secondsLeft = block.GetLeft();
             while (secondsLeft >= 0)
             {
                 await Task.Delay(10 * secondsLeft);
                 user = await GetUser(component.User.Id);
-                block = _mineData.GetBlock(await user.GetData("miningAtX", x, false), await user.GetData("miningAtY", y, false));
-                secondsLeft = (block.Left ?? block.GetLeft())/(5+ await Tools.CharmEffect(["minePower"], _items, user));
+                block = _mineData.GetBlock(user.GetData("miningAtX", x), user.GetData("miningAtY", y));
+                secondsLeft = (block.Left ?? block.GetLeft())/(5+ Tools.CharmEffect(["minePower"], _items, user));
                 switch (secondsLeft)
                 {
                     case > 86400:
@@ -2431,18 +2876,21 @@ public class GemBot
                     properties.Content = $"You are already mining; you cannot start mining another block.\n > **Progress**: {progressBar}\n > **Estimated Time Remaining**: {etl}";
                 });
             }
+
+            await user.Save();
             return;
         }
         if (block.Type == BlockType.Air)
         {
-            await user.SetData("mineX", x, false);
-            await user.SetData("mineY", y);
+            user.SetData("mineX", x);
+            user.SetData("mineY", y);
             Tuple<bool, string, Embed, MessageComponent, string> result = await MineRaw(user.ID, true);
             await component.UpdateAsync((properties) => { 
                 properties.Embed = result.Item3;
                 properties.Content = result.Item2;
                 properties.Components = result.Item4;
             });
+            await user.Save();
         }
         else
         {
@@ -2450,12 +2898,13 @@ public class GemBot
             {
                 block.Mine(component.User.Id, 0); //Mining with power will be determined during MineTick();
                 await _mineData.GetChunk(x / 20).Save(x / 20);
-                await user.SetData("miningAtX", x, false);
-                await user.SetData("miningAtY", y, false);
-                await user.SetData("mining", 1);
+                user.SetData("miningAtX", x);
+                user.SetData("miningAtY", y);
+                user.SetData("mining", 1);
+                await user.Save();
                 await component.RespondAsync("Successfully started mining this block!", ephemeral: true);
-                if (await Tools.CharmEffect(["betterAutoRefresh", "mineAutoRefresh"], _items, user) == 0) {return;}
-                await Task.Delay(1000*((int)(block.Durability / (await Tools.CharmEffect(["minePower"], _items, user) + 5))));
+                if (Tools.CharmEffect(["betterAutoRefresh", "mineAutoRefresh"], _items, user) == 0) {return;}
+                await Task.Delay(1000*((int)(block.Durability / (Tools.CharmEffect(["minePower"], _items, user) + 5))));
                 Tuple<bool, string, Embed, MessageComponent, string> result = await MineRaw(user.ID, true);
                 await component.Message.ModifyAsync((properties) =>
                 {
@@ -2484,8 +2933,7 @@ public class GemBot
         string[] args = settings.Split("|");
         ulong id = component.User.Id;
         CachedUser user = await GetUser(id);
-        ulong oID = component.Message.Interaction.User.Id;
-        if (id != oID)
+        if (!Tools.VerifyOriginalUse(component))
         {
             await component.RespondAsync("This is not your craft page. You cannot click any buttons", ephemeral: true);
             return;
@@ -2500,7 +2948,7 @@ public class GemBot
                 switch (args[1])
                 {
                     case "fav":
-                        List<int> faveRecipes = await user.User.GetListData("craft_favorites");
+                        List<int> faveRecipes = user.User.GetListData("craft_favorites");
                         MessageComponent faveButtons = PageLogic(faveRecipes);
                         await component.UpdateAsync((properties) =>
                         {
@@ -2508,7 +2956,7 @@ public class GemBot
                         });
                         break;
                     case "recent":
-                        List<int> recentRecipes = await user.User.GetListData("craft_recents");
+                        List<int> recentRecipes = user.User.GetListData("craft_recents");
                         MessageComponent recentButtons = PageLogic(recentRecipes);
                         await component.UpdateAsync((properties) =>
                         {
@@ -2562,10 +3010,10 @@ public class GemBot
                 Emote emoj = Emote.Parse(crafted.Emoji);
                 int craftable = recipe.AmountCraftable(user);
                 embay.WithTitle($"Crafting Recipe {recipe.ID}");
-                embay.AddField("Details", recipe.ToString(_items));
+                embay.AddField("Details", recipe.ToString(_items, _currency));
                 ActionRowBuilder topRow = new ActionRowBuilder()
                     .WithButton("home", "craft-home", ButtonStyle.Secondary);
-                if ((await user.User.GetListData("craft_favorites")).Contains(recipe.ID))
+                if ((user.User.GetListData("craft_favorites")).Contains(recipe.ID))
                     topRow.WithButton("un-favorite", $"craft-fav|{recipe.ID}|n", ButtonStyle.Danger);
                 else topRow.WithButton("favorite", $"craft-fav|{recipe.ID}|y", ButtonStyle.Success);
                 ActionRowBuilder craftRow = new ActionRowBuilder()
@@ -2604,7 +3052,7 @@ public class GemBot
                 }
                 CraftingRecipe recipeCrafted = _craftingRecipes[int.Parse(args[1])];
                 Item itemCrafted = _items[recipeCrafted.ItemCrafted];
-                List<int> recent = await user.User.GetListData("craft_recents");
+                List<int> recent = user.User.GetListData("craft_recents");
                 recent.RemoveAll((i) => i == recipeCrafted.ID);
                 recent.Insert(0, recipeCrafted.ID);
                 await component.RespondAsync($"Successfully started crafting {int.Parse(args[2])*recipeCrafted.AmountCrafted}x{itemCrafted.Emoji}", ephemeral: true);
@@ -2612,7 +3060,7 @@ public class GemBot
             case "fav":
                 if (args.Length < 3) throw new ButtonValueError();
                 if (!int.TryParse(args[1], out int recipeID)) throw new ButtonValueError();
-                List<int> favorites = await user.User.GetListData("craft_favorites");
+                List<int> favorites = user.User.GetListData("craft_favorites");
                 switch (args[2])
                 {
                     case "y":
@@ -2622,7 +3070,7 @@ public class GemBot
                             return;
                         }
                         favorites.Add(recipeID);
-                        await user.User.SetListData("craft_favorites", favorites);
+                        user.User.SetListData("craft_favorites", favorites);
                         await component.RespondAsync($"Crafting recipe {recipeID} successfully favorited!", ephemeral:true);
                         break;
                     case "n":
@@ -2632,7 +3080,7 @@ public class GemBot
                             return;
                         }
                         favorites.Remove(recipeID);
-                        await user.User.SetListData("craft_favorites", favorites);
+                        user.User.SetListData("craft_favorites", favorites);
                         await component.RespondAsync($"Crafting recipe {recipeID} successfully un-favorited!", ephemeral:true);
                         break;
                     default:
@@ -2672,6 +3120,7 @@ public class GemBot
                             .WithEmote(Emote.Parse(itemCrafted.Emoji))
                             .WithStyle(ButtonStyle.Primary)
                             .WithCustomId($"craft-recipe|{t}"));
+                    break;
                 }
             }
             ComponentBuilder toReturn = new ComponentBuilder();
@@ -2687,14 +3136,12 @@ public class GemBot
     {
         string[] args = settings.Split("|");
         if (args.Length < 3) throw new ButtonValueError();
-        ulong id = component.User.Id;
-        CachedUser user = await GetUser(id);
-        ulong oID = component.Message.Interaction.User.Id;
-        if (id != oID)
+        if (!Tools.VerifyOriginalUse(component))
         {
             await component.RespondAsync("This is not your work page. You cannot click any buttons", ephemeral: true);
             return;
         }
+        CachedUser user = await GetUser(component.User.Id);
         if (!int.TryParse(args[1], out int workID)) throw new ButtonValueError();
         if (workID != user.LastWork)
         {
@@ -2705,48 +3152,52 @@ public class GemBot
             return;
         }
         user.LastWork = 0;
-        int mn = 10 + await Tools.CharmEffect(["WorkMin", "Work", "GrindMin", "Grind", "Positive"], _items, user);
-        int mx = 16 + await Tools.CharmEffect(["WorkMax", "Work", "GrindMax", "Grind", "Positive"], _items, user);
+        int mn = 10 + Tools.CharmEffect(["WorkMin", "Work", "GrindMin", "Grind", "Positive"], _items, user);
+        int mx = 16 + Tools.CharmEffect(["WorkMax", "Work", "GrindMax", "Grind", "Positive"], _items, user);
         int amnt = _rand.Next(mn, mx);
         switch (args[0])
         {
             case "success":
-                await user.User.Add(amnt, 1, false);
+                user.User.Add(amnt, 1);
                 string text = $"You gained {amnt} Emeralds.";
                 if (args[2] == "True")
                 {
                     text = $"You gained {amnt}{_currency[1]}!!!";
                 }
-                await user.User.Increase("commands",1, false);
-                await user.User.Increase("earned", amnt*10, false);
-                await user.User.Increase("workSuccess", 1, false);
-                await user.User.Increase("work", 1);
+                user.User.Increase("commands",1);
+                user.User.Increase("earned", amnt*10);
+                user.User.Increase("workSuccess", 1);
+                user.User.Increase("work", 1);
                 List<string> workChoices = _dataLists["WorkEffect"];
-                Embed embay = new EmbedBuilder()
+                EmbedBuilder embay = new EmbedBuilder()
                     .WithTitle(text)
                     .WithDescription(workChoices[_rand.Next(0, workChoices.Count)])
-                    .WithColor(new Color(50, 255, 100))
-                    .Build();
+                    .WithColor(new Color(50, 255, 100));
+                if (_rand.Next(0, 4) == 3)
+                {
+                    user.User.GainItem(1, 1);
+                    embay.AddField($"You gained 1{_items[1].Emoji}!", " > This happens 25% of the time.");
+                }
                 await component.UpdateAsync((properties) =>
                 {
-                    properties.Embed = embay;
+                    properties.Embed = embay.Build();
                     properties.Components = null;
                 });
                 break;
             case "failure":
                 Console.WriteLine(amnt);
-                amnt = _rand.Next(1, amnt);
+                amnt = _rand.Next((amnt/3)-1, (amnt/2)+1);
                 Console.WriteLine(amnt);
-                await user.User.Add(amnt, 1, false);
+                user.User.Add(amnt, 1);
                 string textFail = $"You gained {amnt} emeralds.";
                 if (args[2] == "True")
                 {
                     textFail = $"You gained {amnt}{_currency[1]}!!!";
                 }
-                await user.User.Increase("commands",1, false);
-                await user.User.Increase("earned", amnt*10, false);
-                await user.User.Increase("workSuccess", 1, false);
-                await user.User.Increase("work", 1);
+                user.User.Increase("commands",1);
+                user.User.Increase("earned", amnt*10);
+                user.User.Increase("workSuccess", 1);
+                user.User.Increase("work", 1);
                 Embed embayFail = new EmbedBuilder()
                     .WithTitle(textFail)
                     .WithDescription("you failed!")
@@ -2770,38 +3221,383 @@ public class GemBot
         switch (args[0])
         {
             case "buy":
-                if (args.Length < 3) throw new ButtonValueError();
+                if (args.Length < 4) throw new ButtonValueError();
                 if (!int.TryParse(args[1], out int dropID)) throw new ButtonValueError();
                 if (!int.TryParse(args[2], out int slot)) throw new ButtonValueError();
+                if (!int.TryParse(args[3], out int amount)) throw new ButtonValueError();
                 Drop drop = _drops[dropID];
-                if (drop.Left[slot] <= 0)
+                if (drop.Left[slot] < amount)
                 {
                     EmbedBuilder embayOutOfStock = new EmbedBuilder()
                         .WithTitle("Out of stock")
-                        .WithDescription("This drop is now out of stock")
-                        .WithColor(new Color((uint) (await (await userTask).User.GetSetting("uiColor",3287295))));
+                        .WithDescription(drop.Left[slot] <= 0 ? "This drop is now out of stock" : "There is not enough of this drop to buy at this amount")
+                        .WithColor(new Color((uint) ((await userTask).User.GetSetting("uiColor",3287295))));
                     await component.RespondAsync(embed:embayOutOfStock.Build(), ephemeral: true);
                     return;
                 }
                 int[] price = drop.Price[slot];
                 User user = await userTask;
-                if (user.Gems[price[1]] < price[0])
+                if (user.Gems[price[1]] < price[0]*amount)
                 {
                     EmbedBuilder embayTooExpensive = new EmbedBuilder()
                         .WithTitle("You can't afford this")
                         .WithDescription("You don't have enough gems for this drop")
-                        .WithColor(new Color((uint) (await user.GetSetting("uiColor", 3287295))));
+                        .WithColor(new Color((uint) (user.GetSetting("uiColor", 3287295))));
                     await component.RespondAsync(embed:embayTooExpensive.Build(), ephemeral: true);
                     return;
                 }
-                drop.Left[slot]--;
-                await user.Add(-1 * price[0], price[1], false);
-                await user.GainItem(drop.Items[slot], 1);
-                await component.RespondAsync($"You have successfully purchased 1{_items[drop.Items[slot]].Emoji} for {price[0]}{_currency[price[1]]}", ephemeral: true);
+                drop.Left[slot]-= amount;
+                user.Add(-1 * price[0] * amount, price[1]);
+                user.GainItem(drop.Items[slot], amount);
+                string each = amount > 1 ? " (each)" : string.Empty;
+                await component.RespondAsync($"You have successfully purchased {amount}{_items[drop.Items[slot]].Emoji} for {price[0]}{_currency[price[1]]}{each}", ephemeral: true);
+                break;
+            case "page":
+                if (args.Length < 3) throw new ButtonValueError();
+                if (component.User.Id != component.Message.Interaction.User.Id)
+                {
+                    await component.RespondAsync("This is not your shop page. You cannot click page buttons", ephemeral: true);
+                    return;
+                }
+                if (!int.TryParse(args[1], out int dropIDPage)) throw new ButtonValueError();
+                if (!int.TryParse(args[2], out int slotPage)) throw new ButtonValueError();
+                Drop dropPage = _drops[dropIDPage];
+                Item item = _items[dropPage.Items[slotPage]];
+                int maxAmount = dropPage.Left[slotPage];
+                if (maxAmount <= 0)
+                {
+                    await component.RespondAsync("This drop is out of stock", ephemeral: true);
+                    break;
+                }
+                User usr = await userTask;
+                int maxAmountBTemp = usr.Gems[dropPage.Price[slotPage][1]] / dropPage.Price[slotPage][0];
+                if (maxAmountBTemp < maxAmount)
+                {
+                    maxAmount = maxAmountBTemp;
+                }
+                EmbedBuilder embay = new EmbedBuilder()
+                    .WithTitle($"Drop {dropIDPage} item {slotPage} ({item.Name})")
+                    .WithDescription(dropPage.Descriptions[slotPage].Replace("$iDescription", item.Description));
+                ActionRowBuilder topRow = new ActionRowBuilder()
+                    .WithButton("home", "drop-home", ButtonStyle.Secondary);
+                IEmote emoj;
+                if (Emote.TryParse(item.Emoji, out Emote tempEmote)) emoj = tempEmote;
+                else emoj = Emoji.Parse(item.Emoji);
+                ActionRowBuilder buyRow = new ActionRowBuilder()
+                    .WithButton("x1", $"drop-buy|{dropIDPage}|{slotPage}|1", ButtonStyle.Primary, emoj, disabled: maxAmount < 1)
+                    .WithButton("x5", $"drop-buy|{dropIDPage}|{slotPage}|5", ButtonStyle.Primary, emoj, disabled: maxAmount < 5)
+                    .WithButton("x10", $"drop-buy|{dropIDPage}|{slotPage}|10", ButtonStyle.Primary, emoj, disabled: maxAmount < 10)
+                    .WithButton("x40", $"drop-buy|{dropIDPage}|{slotPage}|40", ButtonStyle.Primary, emoj, disabled: maxAmount < 40)
+                    .WithButton($"x{maxAmount}", $"drop-buy|{dropIDPage}|{slotPage}|{maxAmount}|c", ButtonStyle.Primary, emoj, disabled: maxAmount <= 0);
+                MessageComponent pageComponent = new ComponentBuilder().AddRow(topRow).AddRow(buyRow).Build();
+                Embed embedPage = embay.Build();
+                await component.UpdateAsync((properties) =>
+                {
+                    properties.Embed = embedPage;
+                    properties.Components = pageComponent;
+                });
+                break;
+            case "home":
+                if (component.User.Id != component.Message.Interaction.User.Id)
+                {
+                    await component.RespondAsync("This is not your shop page. You cannot click page buttons", ephemeral: true);
+                    return;
+                }
+                Tuple<string, Embed, MessageComponent> shop = await ShopRaw(component.User.Id, true);
+                await component.UpdateAsync((properties) =>
+                {
+                    properties.Content = shop.Item1;
+                    properties.Embed = shop.Item2;
+                    properties.Components = shop.Item3;
+                });
                 break;
             default:
                 throw new ButtonValueError();
         }
+
+        await (await userTask).User.Save();
+    }
+    private async Task NotificationButton(SocketMessageComponent component, string settings)
+    {
+        string[] args = settings.Split("|");
+        CachedUser user = await GetUser(component.User.Id);
+        if (component.Message.Interaction.User.Id != user.User.ID)
+        {
+            await component.RespondAsync("These are not your notifications", ephemeral:true);
+            return;
+        }
+        if (args.Length < 3)
+            throw new ButtonValueError();
+        try
+        {
+            switch (args[0])
+            {
+                case "clear":
+                    int notificationID = int.Parse(args[1]);
+                    int toDelete = int.Parse(args[2]);
+                    if (notificationID != user.NotificationsID || toDelete > user.Notifications.Count)
+                    {
+                        await component.RespondAsync("This is from an old notifications prompt (failure)", ephemeral:true);
+                        await component.Message.ModifyAsync((properties) =>
+                        {
+                            properties.Components = null;
+                            properties.Content = "edited";
+                        });
+                    }
+                    user.NotificationsID++;
+                    for (int i = 0; i < toDelete; i++)
+                    {
+                        user.Notifications.RemoveAt(0);
+                    }
+                    await component.UpdateAsync((properties) => { properties.Components = null;
+                        properties.Embed = null;
+                        properties.Content = "Cleared notifications";
+                    });
+                    break;
+                default:
+                    throw new ButtonValueError();
+            }
+        }
+        catch (InvalidOperationException) { throw new ButtonValueError(); }
+    }
+    private async Task DefaultButton(SocketMessageComponent component, string settings)
+    {
+        string[] args = settings.Split("|");
+        if (args.Length == 0) throw new ButtonValueError();
+        string[] flags = args.Length > 1 ? args[1].Split(',') : [];
+        switch (args[0])
+        {
+            case "cancel":
+                if (!args.Contains("everyone") && !Tools.VerifyOriginalUse(component))
+                {
+                    await component.RespondAsync("You cannot click this button", ephemeral:true);
+                    return;
+                }
+                Embed embay = new EmbedBuilder().WithTitle("Canceled")
+                    .WithDescription("This interaction has been canceled").WithColor(255, 0, 0).Build();
+                await component.UpdateAsync((properties) =>
+                {
+                    if (!args.Contains("keep_text"))
+                        properties.Content = string.Empty;
+                    if (!args.Contains("keep_embeds"))
+                        properties.Embed = embay;
+                    else
+                    {
+                        List<Embed> embeds = properties.Embeds.Value.ToList();
+                        embeds.Add(embay);
+                        properties.Embeds = embeds.ToArray();
+                    }
+                    if (!args.Contains("keep_components"))
+                        properties.Components = null;
+                });
+                if (!args.Contains("auto_delete")) break;
+                await Task.Delay(8000);
+                await component.Message.DeleteAsync();
+                break;
+            default:
+                throw new ButtonValueError();
+        }
+    }
+    private async Task KeyButton(SocketMessageComponent component, string settings)
+    {
+        string[] args = settings.Split("|");
+        if (args.Length < 2) throw new ButtonValueError();
+        User user = await GetUser(component.User.Id);
+        switch (args[0])
+        {
+            case "diamond":
+                if (user.Inventory[16] <= 0)
+                {
+                    await component.RespondAsync("You don't have a diamond key.", ephemeral:true);
+                    return;
+                }
+                if (!int.TryParse(args[1], out int convertTo)) throw new ButtonValueError();
+                if (convertTo is > 4 or < 0) throw new ButtonValueError();
+                for (int i = 0; i < 4; i++)
+                {
+                    if (i >= convertTo) continue;
+                    int upgradeForA = 11;
+                    int upgradeForB = 105;
+                    if (Tools.CharmEffect(["BetterBankTrades"], _items, user) >= 1)
+                    {
+                        upgradeForA = 10;
+                        upgradeForB = 100;
+                    }
+
+                    if (user.Gems[i] > upgradeForB)
+                    {
+                        int amount = user.Gems[i] / upgradeForB;
+                        user.Add(amount * 10, i + 1);
+                        user.Add(amount * upgradeForB * -1, i);
+                    }
+
+                    if (user.Gems[i] > upgradeForA)
+                    {
+                        int amount = user.Gems[i] / upgradeForA;
+                        user.Add(amount, i + 1);
+                        user.Add(amount * upgradeForA * -1, i);
+                    }
+                }
+                for (int i = 4; i > 0; i--)
+                {
+                    if (i <= convertTo) continue;
+                    int downgradeToA = 9;
+                    int downgradeToB = 95;
+                    if (Tools.CharmEffect(["BetterBankTrades"], _items, user) >= 1)
+                    {
+                        downgradeToA = 10;
+                        downgradeToB = 100;
+                    }
+                    if (user.Gems[i] > 10)
+                    {
+                        int amount = user.Gems[i] / 10;
+                        user.Add(amount * -10, i);
+                        user.Add(amount * downgradeToB, i -1);
+                    }
+                    if (user.Gems[i] > 1)
+                    {
+                        int amount = user.Gems[i];
+                        user.Add(amount * -1, i);
+                        user.Add(amount * downgradeToA, i-1);
+                    }
+                }
+                user.GainItem(16, -1);
+                string balance = await BalanceRaw(true, user.ID,
+                    $"You have used your diamond key to convert your money into{_currency[convertTo]} ({_currencyNoEmojiNoFormatting[convertTo]})"
+                    + "\n > **You now have**: ");
+                await component.UpdateAsync((properties) => {
+                    properties.Content = balance;
+                    properties.Embed = null; properties
+                    .Components = null;
+                });
+                await user.Save();
+                break;
+            case "emerald":
+                if (user.Inventory[17] <= 0)
+                {
+                    await component.RespondAsync("You don't have an emerald key.", ephemeral:true);
+                    return;
+                }
+                if (args[1] != "use") throw new ButtonValueError();
+                int charmA = Tools.GetCharm(_itemLists, 0, 4);
+                int charmB = Tools.GetCharm(_itemLists, 0, 3);
+                user.GainItem(charmA, 1);
+                user.GainItem(charmB, 1);
+                user.GainItem(17, -1);
+                await user.Save();
+                await component.RespondAsync($"You gained 1{_items[charmA].Emoji} and 1{_items[charmB].Emoji}!", ephemeral:true);
+                break;
+            case "sapphire":
+                if (user.Inventory[18] <= 0)
+                {
+                    await component.RespondAsync("You don't have a sapphire key.", ephemeral:true);
+                    return;
+                }
+                if (args[1] != "use") throw new ButtonValueError();
+                int charm1 = Tools.GetCharm(_itemLists, 0, 4);
+                int charm2 = Tools.GetCharm(_itemLists, 0, 4);
+                int charm3 = Tools.GetCharm(_itemLists, 0, 4);
+                int charm4 = Tools.GetCharm(_itemLists, 0, 3);
+                int charm5 = Tools.GetCharm(_itemLists, 0, 3);
+                int charm6 = Tools.GetCharm(_itemLists, 1, 3);
+                int charm7 = Tools.GetCharm(_itemLists, 1, 3);
+                int charm8 = Tools.GetCharm(_itemLists, 2, 4);
+                user.GainItem(charm1, 1);
+                user.GainItem(charm2, 1);
+                user.GainItem(charm3, 1);
+                user.GainItem(charm4, 1);
+                user.GainItem(charm5, 1);
+                user.GainItem(charm6, 1);
+                user.GainItem(charm7, 1);
+                user.GainItem(charm8, 1);
+                user.GainItem(18, -1);
+                await user.Save();
+                await component.RespondAsync($"You gained 1{_items[charm1].Emoji}, 1{_items[charm2].Emoji}, 1{_items[charm3].Emoji}, 1{_items[charm4].Emoji}, 1{_items[charm5].Emoji}, 1{_items[charm6].Emoji}, 1{_items[charm7].Emoji}, and 1{_items[charm8].Emoji}!", ephemeral:true);
+                break;
+            case "default":
+                throw new ButtonValueError();
+        }
+    }
+    private async Task ExchangeButton(SocketMessageComponent component, string settings)
+    {
+        string[] args = settings.Split("|");
+        User user = await GetUser(component.User.Id);
+        switch (args[0])
+        {
+            case "charm":
+                if (!int.TryParse(args[1], out int rarity)) throw new ButtonValueError();
+                List<Tuple<int, int>> convert = new List<Tuple<int, int>>();
+                int total = 0;
+                string rarityString = rarity switch
+                { 0 => "CommonCharms", 1 => "UncommonCharms", 2 => "RareCharms", 3 => "EpicCharms", 4 => "LegendaryCharms",
+                 _ => throw new ButtonValueError() };
+                foreach (int item in _itemLists[rarityString].Where(item => user.Inventory[item] >= 2))
+                {
+                    convert.Add(new Tuple<int, int>(item, user.Inventory[item] -1));
+                    total += user.Inventory[item] - 1;
+                }
+                string exchange = $"You bought {total*2}{_items[rarity].Emoji} for \n > {total}{_currency[rarity]}";
+                foreach (Tuple<int, int> pair in convert)
+                {
+                    exchange += $"\n > {pair.Item2}{_items[pair.Item1].Emoji}";
+                    user.GainItem(pair.Item1, pair.Item2 * -1);
+                }
+                user.Add(total, rarity);
+                user.GainItem(rarity, total * 2);
+                await component.RespondAsync(embed: new EmbedBuilder().WithTitle("Purchase Successful").WithDescription(exchange).Build(), ephemeral:true);
+                break;
+            case "token":
+                if (!int.TryParse(args[1], out int value)) throw new ButtonValueError();
+                if (_tokenShop.PurchasedReward(user.ID, value))
+                {
+                    await component.RespondAsync(
+                        "You have already purchased this today. Check back tomorrow for new offers.", ephemeral: true);
+                    return;
+                }
+                int tokensRequired = (int)Math.Pow(10, value);
+                if (user.Inventory[21] < tokensRequired)
+                {
+                    await component.RespondAsync("You cannot afford this", ephemeral: true);
+                    return;
+                }
+                user.GainItem(21, tokensRequired * -1);
+                string tokenRewards = "You gained:";
+                foreach (DailyTokenReward reward in _tokenShop.Rewards[value].Rewards)
+                {
+                    switch (reward.Type)
+                    {
+                        case DailyTokenRewardType.Money:
+                            if (reward is not DailyTokenRewardMoney rewardMoney)
+                            {
+                                Console.WriteLine("Bugged Daily Token Shop");
+                                break;
+                            }
+                            user.Add(reward.Amount, rewardMoney.Value);
+                            tokenRewards += $"\n > {reward.Amount}{_currency[rewardMoney.Value]}";
+                            break;
+                        case DailyTokenRewardType.Items:
+                            if (reward is not DailyTokenRewardItem rewardItem)
+                            {
+                                Console.WriteLine("Bugged Daily Token Shop");
+                                break;
+                            }
+                            user.GainItem(rewardItem.Item, reward.Amount);
+                            tokenRewards += $"\n > {reward.Amount}{_items[rewardItem.Item].Emoji}";
+                            break;
+                        default:
+                            Console.WriteLine("Bugged Daily Token Shop");
+                            break;
+                    }
+                }
+                _tokenShop.Users[user.ID][value] = true;
+                await component.RespondAsync(
+                    embed: new EmbedBuilder().WithTitle("Purchase Successful").WithDescription(tokenRewards)
+                        .WithFooter($"This costed {tokensRequired} {_items[21].Name}").Build(), ephemeral: true);
+                break;
+            default:
+                throw new ButtonValueError();
+        }
+        await user.Save();
     }
     private Task ButtonHandlerSetup(SocketMessageComponent component)
     {
@@ -2837,6 +3633,18 @@ public class GemBot
                 case "drop" or "shop":
                     await DropButton(component, realID[1]);
                     break;
+                case "notifications":
+                    await NotificationButton(component, realID[1]);
+                    break;
+                case "basic":
+                    await DefaultButton(component, realID[1]);
+                    break;
+                case "key":
+                    await KeyButton(component, realID[1]);
+                    break;
+                case "exchange":
+                    await ExchangeButton(component, realID[1]);
+                    break;
                 default:
                     await component.RespondAsync(
                         $"**Button type not found.**\n > `Button of id {realID[0]} and options {realID[1]} was not able to be executed because id {realID[0]} was not found.`",
@@ -2847,7 +3655,7 @@ public class GemBot
         catch (ButtonValueError)
         {
             await component.RespondAsync(
-                $"An internal error due to button definition prevented this button to be handled. \n > `Button of id {realID[0]} was found, but arguments {realID[1]} were not written correctly`\n**This usually happens when the button you clicked was old. Please run the command that gave you the button again and try again**",
+                $"An internal error due to button definition prevented this button from being handled. \n > `Button of id {realID[0]} was found, but arguments {realID[1]} were not written correctly`\n**This usually happens when the button you clicked was old. Please run the command that gave you the button again and try again**",
                 ephemeral: true);
         }
         catch (UserNotFoundError)
@@ -2980,14 +3788,16 @@ public class GemBot
         await message.Channel.SendMessageAsync("Deleting old commands (1/6)...");
         await _client.SetGameAsync("resting commands...");
         string[] names = ["item", "balance", "beg", "stats", "inventory", "work", "magik", "hep", "start", "bank",
-            "theme", "setting", "quests", "give", "mine", "play", "help", "craft", "shop", "spin"];
+            "theme", "setting", "quests", "give", "mine", "play", "help", "craft", "shop", "spin", 
+            "notifications", "key", "exchange"];
         List<string> existingCommands = new List<string>();
         string[] forceUpdateCommands = message.Content.Split(" ")[1..];
-        bool forceUpdateAll = forceUpdateCommands.Contains("all");
+        bool forceClearCommands = forceUpdateCommands.Contains("clear");
+        bool forceUpdateAll = forceUpdateCommands.Contains("all") || forceClearCommands;
         IReadOnlyCollection<RestGlobalCommand>? commands = await  _client.Rest.GetGlobalApplicationCommands();
         foreach (RestGlobalCommand command in commands)
         {
-            if (names.Contains(command.Name)) {existingCommands.Add(command.Name); continue; }
+            if (!forceClearCommands || names.Contains(command.Name)) {existingCommands.Add(command.Name); continue; }
             Console.WriteLine($"Command {command.Name} deleted!");
             await command.DeleteAsync();
         }
@@ -3034,7 +3844,7 @@ public class GemBot
         SlashCommandBuilder work = new SlashCommandBuilder()
             .WithName("work")
             .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall])
-            .WithDescription("Work for emeralds every 5 minutes!");
+            .WithDescription("Work for emeralds every 30 minutes!");
         SlashCommandBuilder magik = new SlashCommandBuilder()
             .WithName("magik")
             .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall])
@@ -3310,8 +4120,7 @@ public class GemBot
                         .AddChoice("2 days", 2880)
                     )
                 )
-            )
-            ;
+            );
         SlashCommandBuilder craft = new SlashCommandBuilder()
             .WithName("craft")
             .WithDescription("Craft items from other items")
@@ -3334,7 +4143,45 @@ public class GemBot
                 .AddChoice("Ruby", 3)
                 .AddChoice("Amber", 4)
                 .WithRequired(true)
+            )
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithType(ApplicationCommandOptionType.Integer)
+                .WithName("amount")
+                .WithDescription("How many wheels would you like to spin?")
+                .WithMinValue(1)
+                .WithMaxValue(450)
             );
+        SlashCommandBuilder notifications = new SlashCommandBuilder()
+            .WithName("notifications")
+            .WithDescription("View items/gems you gained inactively (like from /mine /craft)")
+            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall]);
+        SlashCommandBuilder key = new SlashCommandBuilder()
+            .WithName("key")
+            .WithDescription("Use a key")
+            .WithIntegrationTypes([ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall])
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("diamond")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .WithDescription("Use a diamond key to quickly convert your currency"))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("emerald")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .WithDescription("Use an emerald key to gain some charms"))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("sapphire")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .WithDescription("Use a sapphire key to gain several charms, including a rare+ charm garunteed"))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("ruby")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .WithDescription("Use a ruby key to open a lootbox"))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("amber")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .WithDescription("Use an amber key to gain powerful, amber key exclusive charms"));
+        SlashCommandBuilder exchange = new SlashCommandBuilder()
+            .WithName("exchange")
+            .WithDescription("exchange duplicate charms for coins");
         try
         {
             await message.Channel.SendMessageAsync("Pushing grinding commands (3/6)...");
@@ -3365,6 +4212,10 @@ public class GemBot
                 await _client.CreateGlobalApplicationCommandAsync(shop.Build());
             if (forceUpdateAll || forceUpdateCommands.Contains("spin") || !existingCommands.Contains("spin"))
                 await _client.CreateGlobalApplicationCommandAsync(spin.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("key") || !existingCommands.Contains("key"))
+                await _client.CreateGlobalApplicationCommandAsync(key.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("exchange") || !existingCommands.Contains("exchange"))
+                await _client.CreateGlobalApplicationCommandAsync(exchange.Build());
             await message.Channel.SendMessageAsync("Pushing info commands (5/6)...");
             if (forceUpdateAll || forceUpdateCommands.Contains("item") || !existingCommands.Contains("item")) 
                 await _client.CreateGlobalApplicationCommandAsync(itemInfo.Build());
@@ -3374,6 +4225,8 @@ public class GemBot
                 await _client.CreateGlobalApplicationCommandAsync(help.Build());
             if (forceUpdateAll || forceUpdateCommands.Contains("start") || !existingCommands.Contains("start"))
                 await _client.CreateGlobalApplicationCommandAsync(start.Build());
+            if (forceUpdateAll || forceUpdateCommands.Contains("notifications") || !existingCommands.Contains("notifications"))
+                await _client.CreateGlobalApplicationCommandAsync(notifications.Build());
             await message.Channel.SendMessageAsync("Pushing customization commands(6/6)...");
             if (forceUpdateAll || forceUpdateCommands.Contains("theme") || !existingCommands.Contains("theme"))
                 await _client.CreateGlobalApplicationCommandAsync(theme.Build());
@@ -3386,6 +4239,7 @@ public class GemBot
             Console.WriteLine(json);
             await message.Channel.SendMessageAsync(json);
         }
+        Console.WriteLine("                                 -- COMMANDS WERE RESET --");
         await message.Channel.SendMessageAsync("Reset commands!");
         await _client.SetGameAsync("Commands recently restarted.");
     }
@@ -3636,7 +4490,7 @@ public class GemBot
         {
             case "add":
                 list.Add(item);
-                await File.WriteAllTextAsync($"Data/Lists/{listName}.json", JsonConvert.SerializeObject(list));
+                await File.WriteAllTextAsync($"Data/Lists/{listName}.json", JsonConvert.SerializeObject(list, Formatting.Indented));
                 string text = "[";
                 foreach (string i in list)
                 {
@@ -3831,7 +4685,8 @@ public class GemBot
             return;
         }
         User user = await GetUser(iUser.Id);
-        await user.Add(int.Parse(args[3]), int.Parse(args[2]));
+        user.Add(int.Parse(args[3]), int.Parse(args[2]));
+        await user.Save();
         RestUserMessage msg2 = await message.Channel.SendMessageAsync(
             $"You have successfully added {args[3]} {_currency[int.Parse(args[2])]}",
             embed:new EmbedBuilder()
@@ -3881,7 +4736,8 @@ public class GemBot
             return;
         }
         User user = await GetUser(iUser.Id);
-        await user.GainItem(int.Parse(args[2]), int.Parse(args[3]));
+        user.GainItem(int.Parse(args[2]), int.Parse(args[3]));
+        await user.Save();
         RestUserMessage msg2 = await message.Channel.SendMessageAsync(
             $"You have successfully added {args[3]} {_items[int.Parse(args[2])].Emoji}");
         await Task.Delay(5000);
@@ -4092,13 +4948,25 @@ public class GemBot
                         break;
                 }
                 break;
+            case "price":
+                int money = int.Parse(args[3]);
+                int value = 0;
+                while (money % 10 == 0 && value < 4)
+                {
+                    value++;
+                    money /= 10;
+                }
+                recipe.Price = money;
+                recipe.PriceValue = value;
+                await recipe.Save();
+                break;
             default:
-                RestUserMessage msgNone = await message.Channel.SendMessageAsync("Please specify the property you would like to edit:\n> **time**, **amount**, **item**, or **requirements**.");
+                RestUserMessage msgNone = await message.Channel.SendMessageAsync("Please specify the property you would like to edit:\n> **time**, **amount**, **item**, **price**, or **requirements**.");
                 await Task.Delay(5000);
                 await msgNone.DeleteAsync();
                 return;
         }
-        await message.Channel.SendMessageAsync(recipe.ToString(_items));
+        await message.Channel.SendMessageAsync(recipe.ToString(_items, _currency));
     }
     private async Task CreateDrop(SocketMessage message)
     {
@@ -4381,8 +5249,10 @@ public class GemBot
             {
                 tasks.Add(RemoveInactiveUsersTick());
             }
-            if (taskTimes % 60 * 60 == 0) //every hour
+            if (taskTimes % 3600 == 0) //every hour
             {
+                try{_tokenShop = _tokenShop.CheckDate(_itemLists["CharmSets"], Tools.CurrentDay(), _rand);}
+                catch{Console.WriteLine("I CAUGHT THE BUG!!!");}
                 if (DateTime.Today.Month.ToString() != _mineData.MonthName)
                 {
                     await Task.WhenAll(tasks);
@@ -4408,14 +5278,13 @@ public class GemBot
                     if (block.Type == BlockType.Air || block.MinerID is null) continue;
                     try
                     {
-                        User user = await GetUser((ulong)block.MinerID);
-                        Tuple<bool, int, BlockType> result = block.Mine((ulong)block.MinerID, await Tools.CharmEffect(["minePower"], _items, user)+5);
-                        if (result.Item1)
+                        CachedUser user = await GetUser((ulong)block.MinerID);
+                        var (mined, amountDropped, type) = block.Mine((ulong)block.MinerID, Tools.CharmEffect(["minePower"], _items, user)+5);
+                        if (mined)
                         {
-                            await user.SetData("mining", 0, false);
-                            await user.Increase("mined", 1);
+                            user.User.SetData("mining", 0);
+                            user.User.Increase("mined", 1);
                             _mineData.TimesMined++;
-                            BlockType type = result.Item3;
                             bool dropsItem = type switch
                             {
                                 BlockType.Air => true,
@@ -4425,6 +5294,16 @@ public class GemBot
                                 BlockType.Rubies => false,
                                 BlockType.Sapphires => false,
                                 BlockType.Amber => false,
+                                BlockType.DiamondCoin => true,
+                                BlockType.EmeraldCoin => true,
+                                BlockType.SapphireCoin => true,
+                                BlockType.RubyCoin => true,
+                                BlockType.AmberCoin => true,
+                                BlockType.DiamondKey => true,
+                                BlockType.EmeraldKey => true,
+                                BlockType.SapphireKey => true,
+                                BlockType.RubyKey => true,
+                                BlockType.AmberKey => true,
                                 _ => true
                             };
                             if (dropsItem)
@@ -4433,9 +5312,20 @@ public class GemBot
                                 {
                                     BlockType.Air => 39,
                                     BlockType.Stone => 39,
+                                    BlockType.DiamondCoin => 0,
+                                    BlockType.EmeraldCoin => 1,
+                                    BlockType.SapphireCoin => 2,
+                                    BlockType.RubyCoin => 3,
+                                    BlockType.AmberCoin => 4,
+                                    BlockType.DiamondKey => 16,
+                                    BlockType.EmeraldKey => 17,
+                                    BlockType.SapphireKey => 18,
+                                    BlockType.RubyKey => 19,
+                                    BlockType.AmberKey => 20,
                                     _ => 39
                                 };
-                                await user.GainItem(itemId, result.Item2);
+                                user.User.GainItem(itemId, amountDropped);
+                                user.Notifications.Add($"You gained {amountDropped}{_items[itemId].Emoji} ({_items[itemId].Name}) from mining.");
                             }
                             else
                             {
@@ -4448,8 +5338,10 @@ public class GemBot
                                     BlockType.Amber => 4,
                                     _ => 0
                                 };
-                                await user.Add(result.Item2, value);
+                                user.User.Add(amountDropped, value);
+                                user.Notifications.Add($"You gained {amountDropped}{_currency[value]} from mining.");
                             }
+                            await user.User.Save();
                         }
                     }
                     catch(Exception e){Console.WriteLine(e);}
@@ -4478,8 +5370,8 @@ public class GemBot
     private async Task CraftTick()
     {
         foreach (CachedUser user in _users.Values)
-        {
-           await user.User.CheckFurnaces(await Tools.CharmEffect(["FurnaceSlots"], _items, user) + FurnaceConst);
+        { 
+           user.User.CheckFurnaces(Tools.CharmEffect(["FurnaceSlots"], _items, user) + FurnaceConst);
            foreach (CraftingRecipe.Furnace furnace in user.User.Furnaces)
            {
                if (furnace.Crafting)
@@ -4487,7 +5379,8 @@ public class GemBot
                    if (furnace.TimeLeft > 1) furnace.TimeLeft--;
                    else
                    {
-                       await user.User.GainItem(furnace.NextItem, furnace.Amount);
+                       user.User.GainItem(furnace.NextItem, furnace.Amount);
+                       user.Notifications.Add($"You gained {furnace.Amount}{_items[furnace.NextItem].Emoji}");
                        furnace.Crafting = false;
                    }
                }
@@ -4508,14 +5401,23 @@ public class GemBot
                    }
 
                    CraftingRecipe recipe = _craftingRecipes[user.NextCrafting[0].Item1];
-                   bool failedRecipe = false;
+                   bool failedRecipe = user.User.Gems[recipe.PriceValue] < recipe.Price;
+                   if (failedRecipe)
+                   {
+                       Tuple<int, int> failedCraft = user.NextCrafting[0];
+                       user.NextCrafting.RemoveAt(0);
+                       user.NextCrafting.Add(failedCraft);
+                       continue;
+                   }
                    foreach (CraftingRecipe.RecipeRequirements requirement in recipe.Requirements)
                    {
+                       if (failedRecipe) break;
                        if (user.User.Inventory[requirement.Item] >= requirement.Amount) continue;
                        Tuple<int, int> failedCraft = user.NextCrafting[0];
                        user.NextCrafting.RemoveAt(0);
                        user.NextCrafting.Add(failedCraft);
                        failedRecipe = true;
+                       break;
                    }
                    if (failedRecipe) continue;
                    user.NextCrafting[0] = 
@@ -4524,10 +5426,10 @@ public class GemBot
                    {
                        user.NextCrafting.RemoveAt(0);
                    }
-
+                   user.User.Add(recipe.Price * -1, recipe.PriceValue);
                    foreach (CraftingRecipe.RecipeRequirements requirement in recipe.Requirements)
                    {
-                       await user.User.GainItem(requirement.Item, -1 * requirement.Amount, false);
+                       user.User.GainItem(requirement.Item, -1 * requirement.Amount);
                    }
                    await user.User.Save();
                    furnace.UpdateFromCraftingRecipe(recipe);
