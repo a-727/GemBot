@@ -343,11 +343,109 @@ public class CachedUser (User user, ulong time)
     public List<Tuple<int, int>>? NextCrafting = null;
     public ulong InactiveSince = time;
     public byte LastWork = 0;
-    public List<string> Notifications = [];
+    public List<Notification> Notifications = [];
     public byte NotificationsID = 0;
     public static implicit operator User (CachedUser x)
     {
         return x.User;
+    }
+    public void ConsolidateNotifications()
+    {
+        Notifications = Notification.ConsolidateNotifications(Notifications);
+    }
+    public bool CraftTick(List<Item> items, List<CraftingRecipe> craftingRecipes, int furnaceConst)
+    {
+        bool toReturn = false;
+        User.CheckFurnaces(Tools.CharmEffect(["FurnaceSlots"], items, user) + furnaceConst);
+        foreach (CraftingRecipe.Furnace furnace in User.Furnaces)
+        {
+            if (furnace.Crafting)
+            {
+                toReturn = true;
+                if (furnace.TimeLeft > 1) furnace.TimeLeft--;
+                else
+                {
+                    User.GainItem(furnace.NextItem, furnace.Amount);
+                    //$"You gained {furnace.Amount}{_items[furnace.NextItem].Emoji}"
+                    Notifications.Add(new Notification(furnace.NextItem, furnace.Amount, "crafted"));
+                    furnace.Crafting = false;
+                }
+            }
+            if (furnace.Crafting) continue; //Code below gets recipe to craft, so if you're already crafting you don't need to do it
+            if (NextCrafting == null)
+            {
+                // ReSharper disable once UseCollectionExpression
+                NextCrafting = new List<Tuple<int, int>>();
+                continue;
+            }
+            if (NextCrafting.Count <= 0) continue;
+            if (NextCrafting[0].Item2 <= 0)
+            {
+                NextCrafting.RemoveAt(0);
+                continue;
+            }
+            CraftingRecipe recipe = craftingRecipes[NextCrafting[0].Item1];
+            bool failedRecipe = User.Gems[recipe.PriceValue] < recipe.Price;
+            if (failedRecipe)
+            {
+                Tuple<int, int> failedCraft = NextCrafting[0];
+                NextCrafting.RemoveAt(0);
+                NextCrafting.Add(failedCraft);
+                continue;
+            }
+            foreach (CraftingRecipe.RecipeRequirements requirement in recipe.Requirements)
+            {
+                if (failedRecipe) break;
+                if (User.Inventory[requirement.Item] >= requirement.Amount) continue;
+                Tuple<int, int> failedCraft = NextCrafting[0];
+                NextCrafting.RemoveAt(0);
+                NextCrafting.Add(failedCraft);
+                failedRecipe = true;
+                break;
+            }
+            if (failedRecipe) continue;
+            NextCrafting[0] = new Tuple<int, int>(NextCrafting[0].Item1, NextCrafting[0].Item2 - 1);
+            if (NextCrafting[0].Item2 <= 0)
+            {
+                NextCrafting.RemoveAt(0);
+            }
+            User.Add(recipe.Price * -1, recipe.PriceValue);
+            foreach (CraftingRecipe.RecipeRequirements requirement in recipe.Requirements)
+            {
+                User.GainItem(requirement.Item, -1 * requirement.Amount);
+            }
+            furnace.UpdateFromCraftingRecipe(recipe);
+            toReturn = true;
+        }
+        return toReturn;
+    }
+    public class Notification
+    {
+        public int Reward { get; set; } //0+ for items, -1 diamond, -2 emerald, -3 sapphire, -4 ruby, -5 amber
+        public int Amount { get; set; }
+        public string Source { get; set; }
+        public static List<Notification> ConsolidateNotifications(List<Notification> notifications)
+        {
+            List<Notification> newNotifications = new List<Notification>();
+            foreach (Notification notification in notifications)
+            {
+                int alreadyCoverd = newNotifications.FindIndex(n =>
+                    n.Source == notification.Source && n.Reward == notification.Reward);
+                if (alreadyCoverd == -1)
+                {
+                    newNotifications.Add(notification);
+                    continue;
+                }
+                newNotifications[alreadyCoverd].Amount += notification.Amount;
+            }
+            return newNotifications;
+        }
+        public Notification(int reward, int amount, string source)
+        {
+            Reward = reward;
+            Amount = amount;
+            Source = source;
+        }
     }
 }
 
@@ -542,5 +640,73 @@ public class CraftingRecipe
             TimeLeft--;
             return TimeLeft <= 0;
         }
+    }
+}
+
+public class MagikReward
+{ 
+    public int Chance;
+    public Func<CachedUser, CachedUser, string> DoMagik;
+    public MagikReward(int chance, Func<CachedUser, CachedUser, string> action)
+    {
+        Chance = chance; 
+        DoMagik = action;
+    }
+} 
+public class StandardMagikReward : MagikReward
+{
+    private string _text;
+    private int _userGems;
+    private int _userGemValue; 
+    private int _targetGems; 
+    private int _targetGemValue; 
+    public StandardMagikReward(string text, int userGems, int userGemValue, int targetGems, int targetGemValue, int chance) : base(chance, MagikLogicStatic) 
+    { 
+        _text = text; 
+        _userGems = userGems; 
+        _userGemValue = userGemValue; 
+        _targetGems = targetGems; 
+        _targetGemValue = targetGemValue; 
+        DoMagik = MagikLogic;
+    } 
+    public string MagikLogic(CachedUser user, CachedUser target) 
+    { 
+        user.User.Increase("earned", (int)(_userGems*Math.Pow(10, _userGemValue))); 
+        user.User.Add(_userGems, _userGemValue); 
+        target.User.Add(_targetGems, _targetGemValue); 
+        return _text;
+    }
+    public static string MagikLogicStatic(CachedUser user, CachedUser target) { return "error error MagikLogicStatic: StandardMagikReward"; } 
+}
+public class ItemMagikReward : MagikReward
+{
+    private string _text; 
+    private int _userItems; 
+    private int _userItemID; 
+    private int _targetItems; 
+    private int _targetItemID; 
+    private List<Item> _items;
+    public ItemMagikReward(string text, int userItems, int userItemID, int targetItems, int targetItemID, int chance, List<Item> items) : base(chance, MagikLogicStatic) 
+    { 
+        _text = text; 
+        _userItems = userItems; 
+        _userItemID = userItemID; 
+        _targetItems = targetItems; 
+        _targetItemID = targetItemID; 
+        _items = items;
+        DoMagik = MagikLogic;
+    } 
+    public string MagikLogic(CachedUser user, CachedUser target) 
+    { 
+        user.User.GainItem(_userItemID, _userItems); 
+        target.User.GainItem(_targetItemID, _targetItems); 
+        string toReturn = _text
+            .Replace("$user_item", $"{_userItems}{_items[_userItemID].Emoji}")
+            .Replace("$target_item", $"{_targetItems}{_items[_targetItemID].Emoji}");
+        return toReturn;
+    }
+    public static string MagikLogicStatic(CachedUser user, CachedUser target)
+    {
+        return "error error MagikLogicStatic: ItemMagikReward";
     }
 }

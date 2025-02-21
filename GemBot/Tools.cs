@@ -10,6 +10,7 @@ public class UserExistsException(string username = "") : Exception($"Username {u
 {
     
 }
+
 public static class Tools
 {
     public static ulong CurrentTime()
@@ -29,18 +30,30 @@ public static class Tools
             int percentage = done * 100 / total;
             string toReturn = percentage switch
             {
-                0 => "<:progress1E:1287084674648375419><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
-                <= 10 => "<:progress1P:1287084753438244906><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
-                <= 20 => "<:progress1H:1287084728268226690><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
-                <= 30 => "<:progress1F:1287084706667561062><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
-                <= 40 => "<:progress1C:1287084653379063818><:progress2P:1287084937635172372><:progress3E:1287084980190838959>",
-                <= 50 => "<:progress1C:1287084653379063818><:progress2H:1287084885617541263><:progress3E:1287084980190838959>",
-                <= 60 => "<:progress1C:1287084653379063818><:progress2M:1287084910271795341><:progress3E:1287084980190838959>",
-                <= 70 => "<:progress1C:1287084653379063818><:progress2F:1287084849227894915><:progress3E:1287084980190838959>",
-                <= 80 => "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3P:1287085204875513886>",
-                <= 90 => "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3H:1287085077305753671>",
-                < 100 => "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3M:1287085165037748357>",
-                _ => "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3F:1287085036998361181>"
+                0 =>
+                    "<:progress1E:1287084674648375419><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
+                <= 10 =>
+                    "<:progress1P:1287084753438244906><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
+                <= 20 =>
+                    "<:progress1H:1287084728268226690><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
+                <= 30 =>
+                    "<:progress1F:1287084706667561062><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
+                <= 40 =>
+                    "<:progress1C:1287084653379063818><:progress2P:1287084937635172372><:progress3E:1287084980190838959>",
+                <= 50 =>
+                    "<:progress1C:1287084653379063818><:progress2H:1287084885617541263><:progress3E:1287084980190838959>",
+                <= 60 =>
+                    "<:progress1C:1287084653379063818><:progress2M:1287084910271795341><:progress3E:1287084980190838959>",
+                <= 70 =>
+                    "<:progress1C:1287084653379063818><:progress2F:1287084849227894915><:progress3E:1287084980190838959>",
+                <= 80 =>
+                    "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3P:1287085204875513886>",
+                <= 90 =>
+                    "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3H:1287085077305753671>",
+                < 100 =>
+                    "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3M:1287085165037748357>",
+                _ =>
+                    "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3F:1287085036998361181>"
             };
             return toReturn;
         }
@@ -84,6 +97,7 @@ public static class Tools
                 {
                     user.TutorialProgress[i] = true;
                 }
+
                 break;
             }
         }
@@ -97,15 +111,19 @@ public static class Tools
             EmbedBuilder embay = new EmbedBuilder()
                 .WithTitle($"{tutorial.Name}: {step.Name}")
                 .WithDescription(step.Description);
-            await command.Channel.SendMessageAsync($"<@{user.User.ID}> you have completed a step in the following tutorial! Below is what to do next:", embed: embay.Build());
+            await command.Channel.SendMessageAsync(
+                $"<@{user.User.ID}> you have completed a step in the following tutorial! Below is what to do next:",
+                embed: embay.Build());
         }
         else
         {
             user.TutorialPage = 0;
             user.TutorialProgress = null;
             user.TutorialOn = null;
-            await command.Channel.SendMessageAsync($"<@{user.User.ID}> you have completed your current tutorial! Use `/start` to start a new one!");
+            await command.Channel.SendMessageAsync(
+                $"<@{user.User.ID}> you have completed your current tutorial! Use `/start` to start a new one!");
         }
+
         return user;
     }
     public static async Task<User> UserCreator(ulong id)
@@ -115,8 +133,9 @@ public static class Tools
             Console.WriteLine("User exists!");
             throw new UserExistsException(id.ToString());
         }
+
         User user = new User { ID = id };
-        await File.WriteAllTextAsync($"Data/Users/{id}",JsonConvert.SerializeObject(user));
+        await File.WriteAllTextAsync($"Data/Users/{id}", JsonConvert.SerializeObject(user));
         return user;
     }
     public static int CharmEffect(string[] effects, List<Item> items, User user)
@@ -133,16 +152,19 @@ public static class Tools
                 toReturn += charm.Amount;
             }
         }
+
         return toReturn;
     }
     public static int GetCharm(Dictionary<string, List<int>> itemLists, int startingRarity = 0, int upgradeDiff = 11, Random? randomParam = null, string[]? rarityToListParam = null)
     {
         Random random = randomParam ?? new Random();
-        string[] rarityToList = rarityToListParam ?? ["CommonCharms", "UncommonCharms", "RareCharms", "EpicCharms", "LegendaryCharms"];
-        if (random.Next(0, upgradeDiff) == upgradeDiff -1 && startingRarity < 4)
+        string[] rarityToList = rarityToListParam ??
+                                ["CommonCharms", "UncommonCharms", "RareCharms", "EpicCharms", "LegendaryCharms"];
+        if (random.Next(0, upgradeDiff) == upgradeDiff - 1 && startingRarity < 4)
         {
             return GetCharm(itemLists, startingRarity + 1, upgradeDiff, random, rarityToList);
         }
+
         List<int> itemChoice = itemLists[rarityToList[startingRarity]];
         return itemChoice[random.Next(itemChoice.Count)];
     }
@@ -153,16 +175,18 @@ public static class Tools
         {
             return true;
         }
+
         SocketGuildUser user;
-        if (command.Channel == null) 
+        if (command.Channel == null)
             //The channel is only ever null IF it is run in a server it doesn't have access to the channels. IE: User Apps run as a User App.
         {
             return true; //Since it is a User App, we can say it can show custom emojis, hence the true return.
             //It used to be the false but now user apps can use emojis.
         }
+
         try
         {
-            user = client.GetGuild(command.GuildId ?? throw new InvalidOperationException()).GetUser(botID); 
+            user = client.GetGuild(command.GuildId ?? throw new InvalidOperationException()).GetUser(botID);
             //This sets us up for future code by getting the SocketGuildUser of the bot, which we will check later for "Use External Emojis" permission.
             //In addition, it raises a DivideByZeroException immediately handled below if it's not in a guild.
         }
@@ -174,12 +198,16 @@ public static class Tools
             //So we can conclude that it is a DM, in which case use external emojis is always turned on.
             return true; //In DMs, you can always use External Emojis, so let's send some...
         }
+
         if (user.GuildPermissions.Has(GuildPermission.UseExternalEmojis))
             //remember user is the current bot in the current guild
         {
-            return true; //The bot is in a server where it has "Use External Emojis" permission, so those emojis will show.
+            return
+                true; //The bot is in a server where it has "Use External Emojis" permission, so those emojis will show.
         }
-        return false; //Since every other case has returned, the bot is in a server where it doesn't have permissions to use emojis. So, let's return that.
+
+        return
+            false; //Since every other case has returned, the bot is in a server where it doesn't have permissions to use emojis. So, let's return that.
     }
     public static string IDString(int id, string directory = "Data/Items")
     {
@@ -196,21 +224,46 @@ public static class Tools
     {
         return component.User.Id == component.Message.Interaction.User.Id;
     }
+    public static int TotalEmbedLength(EmbedBuilder embed)
+    {
+        int t = embed.Length;
+        foreach (EmbedFieldBuilder embedField in embed.Fields)
+        {
+            t += embedField.Name.Length + embedField.Value.ToString().Length;
+        }
+
+        return t;
+    }
     public class ItemAutocompleteHandler : AutocompleteHandler
     {
         public List<Item> Items { get; set; }
+
         public ItemAutocompleteHandler(List<Item> items)
         {
             Items = items;
         }
-        public override async Task<AutocompletionResult> GenerateSuggestionsAsync(IInteractionContext context, IAutocompleteInteraction autocompleteInteraction, IParameterInfo parameter, IServiceProvider services)
+
+        public override async Task<AutocompletionResult> GenerateSuggestionsAsync(IInteractionContext context,
+            IAutocompleteInteraction autocompleteInteraction, IParameterInfo parameter, IServiceProvider services)
         {
             // Create a collection with suggestions for autocomplete
             List<AutocompleteResult> results = new List<AutocompleteResult>();
-                Console.WriteLine(context.Interaction.Data.ToString());
+            Console.WriteLine(context.Interaction.Data.ToString());
 
             // max - 25 suggestions at a time (API limit)
             return AutocompletionResult.FromSuccess(results.Take(25));
         }
+    }
+    public static string ArrayToText<T>(T[] array, string delimiter = ",", string startWith = "[", string endWith = "]")
+    {
+        string toReturn = startWith;
+        foreach (T item in array)
+        {
+            if (toReturn != startWith) toReturn += delimiter;
+            if (item == null) { toReturn += "null"; }
+            else { toReturn += item.ToString(); }
+        }
+        toReturn += endWith;
+        return toReturn;
     }
 }

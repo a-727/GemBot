@@ -8,6 +8,35 @@ using Newtonsoft.Json;
 
 namespace GemBot;
 
+/*
+TODO *
+* Other tasks
+ * Buff beg rewards slightly
+ * Slightly buff work
+ * Slightly buff work failure
+ * Add DM notifications
+ * Add new Work interaction (24 red xs, one green check)
+ * View and edit crafting cue
+ * Redo keys (item rewards)
+ * Increase Emerald through Amber Coin crafting times
+ * Remove ambers and rubies and amber coins from /mine
+ * Buff Diamond drop rates in /mine
+ * Make better /mine ores rarer
+ * Make /mine ores that other
+ * Increase stone mining time at lower depths
+ * Decrease coin price in daily token shop
+ * Give coins for daily quests if you have crate, make crate rewards the default ones.
+* Done this update:
+ * Fixed /help command
+ * Written /settings command
+ * Implement new /notification system
+ * Changed /magik logic
+ * Nerfed rate of charms from coins 22% -> 14%
+ * Buffed charm upgrade rate from coins 1/12 -> 1/7
+ * Nerfed lots of gems from coins 100 -> 65
+ * Added new 8% 10 gems to coin loot pool
+ * Nerfed play donations, nerfed play cooldown and viewers at higher tiers
+ */
 public class NoTokenError : Exception { }
 public class UserNotFoundError() : Exception("The user was not found"){}
 public class InvalidArgumentException: Exception{}
@@ -320,6 +349,9 @@ public class GemBot
                 case "exchange":
                     await CharmsToCoins(command);
                     break;
+                case "setting":
+                    await SettingsCommand(command);
+                    break;
                 default:
                     await command.RespondAsync($"Command {command.Data.Name} not found", ephemeral: true);
                     break;
@@ -329,18 +361,23 @@ public class GemBot
             {
                 _users[command.User.Id] = await Tools.UpdateTutorial(command.Data.Name, _tutorials, value, command);
             }
+
             try
             {
                 User user = await GetUser(command.User.Id);
-                int delay = (int) user.GetSetting("delayBeforeDelete", 60);
+                int delay = (int)user.GetSetting("delayBeforeDelete", 60);
                 if (delay == 0)
                 {
                     return;
                 }
+
                 await Task.Delay(TimeSpan.FromMinutes(delay));
                 await command.DeleteOriginalResponseAsync();
             }
-            catch (HttpException) { }
+            catch (HttpException e)
+            {
+                Console.WriteLine(e);
+            }
         }
         catch (Cooldown cool)
         {
@@ -377,11 +414,18 @@ public class GemBot
             .WithTitle("All commands")
             .WithDescription("The main commands of gemBOT will be listed here, organized into groups.")
             .AddField("Grind commands",
-                "`/beg`: Beg for gems every 5 seconds! You can get 5-8 diamonds. \n`/work`: Work for gems every 5 minutes! You can get 12-15 emeralds! \n`/magik`: Technically a grind command, you can magik up gems every 12 seconds. Better with a wand!")
-            .AddField("Other economy Commands",
-                "`/balance`: view your balance in gems! \n`/inventory`: view your inventory, split up into multiple pages")
+                " > **/beg**: Beg for gems every 20 seconds! You can get 5-8 diamonds. \n > **/work**: Work for gems every 30 minutes! You can get 12-15 emeralds! \n > **/magik**: Technically a grind command, you can magik up gems every 60 seconds. Better with a wand!\n > **/play**: Play videogames. Rewards increase the more you run this command. Requires a controller\n > **/mine**: Mine stone, gems & coins! You don't NEED pickaxes to use this command.")
+            .AddField("Balance Commands",
+                " > **/balance**: view your balance in gems!\n > **/inventory**: view your inventory, split up into multiple pages\n > **/bank**: Convert your currency to other values")
+            .AddField("Spend/Use Commands",
+                " > **/shop**: View and buy limited-time drops and the daily token shop\n **/spin**: Use your coins to gain rewards, including charms!\n > **/key**: Use your keys\n > **/exchange**: Exchange duplicate chrams for coins")
+            .AddField("Other economy commands", 
+                " > **/quests**: View daily quests & gain rewards from daily quests\n > **/give**: Give gems and items to other users\n > **/craft**: Craft items from other items")
             .AddField("Info commands",
-                "`/help`: List (almost) all gemBOT commands! \n`/start`: View any of gemBOT's many tutorials. \n`/item`: View details about an item");
+                " > **/help**: List (almost) all gemBOT commands, use *table* option to see loot tables \n > **/start**: View any of gemBOT's many tutorials. \n > **/item**: View details about an item\n > **/stats**: View your stats\n > **/notifications**: View your notifications")
+            .AddField("Customization commands",
+                " > **/theme**: Change your theme!\n > **/setting**: Change your settings")
+            .WithColor((uint)(await GetUser(command.User.Id)).User.GetSetting("uiColor", 3287295));
         await command.RespondAsync(embed: embay.Build());
     }
     private async Task<string> BalanceRaw(bool showEmojis, ulong userID, string atStartInfo = "**Your balance**:")
@@ -710,7 +754,8 @@ public class GemBot
     }
     private async Task Magik(SocketSlashCommand command)
     {
-        User user = await GetUser(command.User.Id);
+        //previous start at 977
+        CachedUser user = await GetUser(command.User.Id);
         ulong t = (ulong)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
         uint timeoutFor = (Tools.CharmEffect(["fasterCooldown", "positive"], _items, user)) switch
         {
@@ -722,9 +767,9 @@ public class GemBot
             < 2700 => 10, < 2845 => 9, < 2990 => 8, < 3135 => 7, < 3280 => 6, < 3425 => 5, < 3570 => 4, < 3715 => 3, < 3860 => 2, < 4005 => 1,
             _ => 0
         };
-        if (await user.OnCoolDown("magik", t, timeoutFor))
+        if (await user.User.OnCoolDown("magik", t, timeoutFor))
         {
-            throw new Cooldown(user.CoolDowns["magik"]);
+            throw new Cooldown(user.User.CoolDowns["magik"]);
         }
 
         int power = Tools.CharmEffect(["Magik", "Unlocker", "Positive"], _items, user);
@@ -735,108 +780,166 @@ public class GemBot
             targetID = ((SocketGuildUser)command.Data.Options.First().Value).Id;
             if (command.Data.Options.Last().Value.ToString() == "yes")
             {
-                user.SetSetting("magikID", targetID);
+                if (targetID != user.User.GetSetting("magikID", user.User.ID)) power += 1;
+                
+                user.User.SetSetting("magikID", targetID);
             }
         }
         catch (InvalidOperationException)
         {
-            targetID = user.GetSetting("magikID", user.ID);
+            targetID = user.User.GetSetting("magikID", user.User.ID);
         }
         catch (InvalidCastException)
         {
-            targetID = user.GetSetting("magikID", user.ID);
+            targetID = user.User.GetSetting("magikID", user.User.ID);
             badInput = true;
         }
 
-        User target = await GetUser(targetID);
-        if (targetID != user.ID)
+        CachedUser target = await GetUser(targetID);
+        if (targetID != user.User.ID)
         {
             power += 3;
         }
 
         power += _rand.Next(0, 2);
-        if (targetID != user.GetSetting("magikID", user.ID))
+        if (targetID != user.User.GetSetting("magikID", user.User.ID))
         {
             power += 1;
         }
 
-        List<Tuple<string, int, int, int, int, int>> chances =
+        List<MagikReward> chances =
         [
-            new Tuple<string, int, int, int, int, int>("You gained 8$diamonds.", 8, 0, 1, 0, 9),
-            new Tuple<string, int, int, int, int, int>("You gained 1$emeralds.", 1, 0, 0, 0, 4),
-            new Tuple<string, int, int, int, int, int>("Nothing happened", 0, 0, 0, 0, 21+power),
-            new Tuple<string, int, int, int, int, int>("$target gained 10$diamonds", 0, 0, 10, 0, 6)
+            //total chance = 10
+            new StandardMagikReward("$user gained 12$diamonds", 12, 0, 1, 0, 3),
+            new StandardMagikReward("$user gained 1$emeralds.", 1, 0, 0, 0, 2),
+            new MagikReward(3+power, (_, _) => "Nothing happened"),
+            new StandardMagikReward("$target gained 10$diamonds", 0, 0, 10, 0, 2)
         ];
         if (power >= 1)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 7$diamonds", 7, 0, 7, 0, 10));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 8$diamonds", 8, 0, 8, 0, 4));
+            //total chance = 15, new chance = 5
+            chances.Add(new StandardMagikReward("$user and $target both gained 7$diamonds", 7, 0, 7, 0, 2));
+            chances.Add(new StandardMagikReward("$user and $target both gained 8$diamonds", 8, 0, 8, 0, 2));
+        }
+        if (power >= 2)
+        {
+            //total chance = 20, new chance = 5
+            chances.Add(new StandardMagikReward("$user gained 20$diamonds", 20, 0,0, 0, 2));
+            chances.Add(new StandardMagikReward("$target gained 20$diamonds", 3, 0, 20, 0, 2));
         }
         if (power >= 3)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 11$diamonds!", 11, 0, 11, 0, 12));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained 2$emeralds!", 2, 1, 0, 0, 8));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained 2$emeralds", 0, 0, 2, 1, 6));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
+            //total chance = 25, new chance = 5
+            chances.Add(new StandardMagikReward($"$user and $target both gained {2+power*3}$diamonds!", 2+power*3, 0, 2+power*3, 0, 2));
+            chances.Add(new StandardMagikReward("$user gained 2$emeralds!", 2, 1, 0, 0, 1));
+            chances.Add(new StandardMagikReward("$target gained 2$emeralds", 0, 0, 2, 1, 1));
         }
         if (power >= 4)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 1$emeralds", 1, 1, 1, 1, 15));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 2$emeralds", 2, 1, 2, 1, 5));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target both gained 3$emeralds", 3, 1, 3, 1, 2));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained 1$sapphires", 1, 2, 0, 0, 1));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained 1$sapphires", 0, 0, 1, 2, 1));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_wand", 0, 0, 0, 0, 1));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_wand", 0, 0, 0, 0, 1));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
+            //total chance = 30, new chance = 5
+            chances.Add(new StandardMagikReward("$user and $target both gained 2$emeralds", 2, 1, 2, 1, 2));
+            chances.Add(new ItemMagikReward("$user gained $user_item", 1, 10, 0, 0, 1, _items));
+            chances.Add(new ItemMagikReward("$target gained $target_item", 0, 0, 1, 10, 1, _items));
         }
         if (power >= 5)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained 1$sapphires", 1, 2, 0, 0, 4));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained 1$sapphires", 0, 0, 1, 2, 4));
+            //total chance = 35, new chance = 5
+            chances.Add(new StandardMagikReward("$user gained 1$sapphires", 1, 2, 0, 0, 2));
+            chances.Add(new StandardMagikReward("$target gained 1$sapphires", 0, 0, 1, 2, 2));
         }
         if (power >= 6)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user and $target gained 80$diamonds", 80, 0, 80, 0, 12));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained 120$diamonds", 120, 0, 0, 0, 6));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained 120$diamonds", 0, 0, 120, 0, 6));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$user gained {power}$emeralds!", power, 1, 0, 0, power));
-            chances.Add(new Tuple<string, int, int, int, int, int>($"$target gained {power}$emeralds", 0, 0, power, 1, power));
+            //total chance = 40, new chance = 5
+            chances.Add(new StandardMagikReward($"$user and $target gained {70+5*power}$diamonds", 70+5*power, 0, 70+5*power, 0, 2));
+            chances.Add(new StandardMagikReward($"$user gained {100+10*power}$diamonds", 100+10*power, 0, 0, 0, 1));
+            chances.Add(new StandardMagikReward($"$target gained {100+10*power}$diamonds", 0, 0, 100+10*power, 0, 1));
+        }
+        if (power >= 7)
+        {
+            //total chance == 45, new chance = 5
+            //NOW HAS TWO POWER-SCALING CHANCES
+            chances.Add(new MagikReward(power-4, (mUser, mTarget) =>
+            {
+                bool didSomethingUser = false;
+                for (int i = 0; i < 240 + (power*5); i++)
+                {
+                    if (mUser.CraftTick(_items, _craftingRecipes, FurnaceConst)) didSomethingUser = true;
+                }
+                if (!didSomethingUser)
+                {
+                    mUser.User.Add(70+6*power, 0);
+                }
+
+                if (mUser.User.ID != mTarget.User.ID)
+                {
+                    bool didSomethingTarget = false;
+                    for (int i = 0; i < 120 + (power * 3); i++)
+                    {
+                        if (mTarget.CraftTick(_items, _craftingRecipes, FurnaceConst)) didSomethingTarget = true;
+                    }
+
+                    if (!didSomethingTarget)
+                    {
+                        mTarget.User.Add(40 + 2 * power, 0);
+                    }
+
+                    string toReturnT = didSomethingUser switch
+                    {
+                        true => $"$user's crafting was sped up by {240 + (power * 5)} seconds",
+                        false => $"$user gained {70 + power * 6}$diamonds"
+                    };
+                    toReturnT += didSomethingTarget switch
+                    {
+                        true => $"\n > And, $target's crafting was sped up by {120 + (power * 3)} seconds)",
+                        false => $"\n > And, $target gained {40 + 2*power}$diamonds"
+                    };
+                    return toReturnT;
+                }
+                string toReturn = didSomethingUser switch
+                {
+                    true => $"$user's crafting was sped up by {240 + (power * 5)} seconds",
+                    false => $"$user gained {70 + power * 6}$diamonds"
+                } + "\n > The target could've gained extra rewards if you targeted somebody.";
+                return toReturn;
+            }));
+            chances.Add(new ItemMagikReward($"$user gained $user_item and $target gained $target_item", 3, 0, 3, 0, 1, _items));
         }
         if (power >= 8)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_wand\n$target gained $target_wand", 0, 0, 0, 0, 1));
+            //total chance = 50, new chance = 5
+            chances.Add(new StandardMagikReward("$user gained 1$sapphires", 1, 2, 0, 0, 2));
+            chances.Add(new StandardMagikReward("$target gained 1$sapphires", 0, 0, 1, 2, 1));
         }
         if (power >= 9)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm", 0, 0, 0, 0, 5));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm", 0, 0, 0, 0, 4));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm and $target gained $target_charm", 0, 0, 0, 0, 1));
+            //total chance = 55, new chance = 5
+            chances.Add(new ItemMagikReward($"$user gained $user_item and $target gained $target_item", 1, 10, 1, 10, 1, _items));
+            chances.Add(new ItemMagikReward($"$user gained $user_item and $target gained $target_item", 5, 0, 5, 0, 1, _items));
+            chances.Add(new ItemMagikReward($"$user gained $user_item and $target gained $target_item", 1, Tools.GetCharm(_itemLists, 0, 5), 1, 0, 1, _items));
         }
         if (power >= 10)
         {
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm", 0, 0, 0, 0, 5));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm", 0, 0, 0, 0, 4));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$user gained $user_charm, $user_charm2", 0, 0, 0, 0, 2));
-            chances.Add(new Tuple<string, int, int, int, int, int>("$target gained $target_charm, $target_charm2", 0, 0, 0, 0, 1));
+            //total chance = 60, new chance = 5
+            chances.Add(new StandardMagikReward("$user gained 1$sapphire and $target gained 5$emeralds", 1, 2, 5, 1, 2));
+            chances.Add(new ItemMagikReward($"$user gained $user_item and $target gained $target_item", 3, 0, 1, Tools.GetCharm(_itemLists, 0, 6), 1, _items));
+        }
+        if (power >= 11)
+        {
+            //total chance = 62, new chance = 2
+        }
+        if (power >= 12)
+        {
+            //total chance = 64, new chance = 2
         }
         List<int> pickFrom = [];
         for (int i = 0; i < chances.Count; i++)
         {
-            for (int j = 0; j < chances[i].Item6; j++)
+            for (int j = 0; j < chances[i].Chance; j++)
             {
                 pickFrom.Add(i);
             }
         }
-        Tuple<string, int, int, int, int, int> tuple = chances[pickFrom[_rand.Next(pickFrom.Count)]];
-        user.Increase("commands", 1);
-        user.Increase("magik", 1);
-        user.Increase("earned", (int)(tuple.Item2*Math.Pow(10, tuple.Item3)));
-        user.Add(tuple.Item2, tuple.Item3);
-        target.Increase("earned", (int)(tuple.Item4 * Math.Pow(10, tuple.Item5)));
-        target.Add(tuple.Item4, tuple.Item5);
+        MagikReward reward = chances[pickFrom[_rand.Next(pickFrom.Count)]];
         string diamonds = " **diamonds**";
         string emeralds = " **emeralds**";
         string sapphires = " **sapphires**";
@@ -847,76 +950,22 @@ public class GemBot
             emeralds = _currency[1];
             sapphires = _currency[2];
         }
-        string toRespond = tuple.Item1
+        user.User.Increase("commands", 1);
+        user.User.Increase("magik", 1);
+        string toRespond = reward.DoMagik(user, target)
             .Replace("$diamonds", diamonds)
             .Replace("$emeralds", emeralds)
             .Replace("$sapphires", sapphires)
-            .Replace("$user_charm", "`")
-            .Replace("$user_charm2", "~")
-            .Replace("$target_charm", "%")
-            .Replace("$target_charm2", "¡")
-            .Replace("$user_wand", "*")
-            .Replace("$target_wand", "•")
-            .Replace("$user", $"<@{user.ID}>")
-            .Replace("$target", $"<@{target.ID}>");
-        foreach (char c in toRespond)
-        {
-            switch (c)
-            {
-                case '`':
-                {
-                    int itemID = Tools.GetCharm(_itemLists, 0, 99);
-                    user.GainItem(itemID, 1);
-                    toRespond = toRespond.Replace("`",
-                        emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
-                    break;
-                }
-                case '~':
-                {
-                    int itemID = Tools.GetCharm(_itemLists, 0, 199);
-                    user.GainItem(itemID, 1);
-                    toRespond = toRespond.Replace("~",
-                        emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
-                    break;
-                }
-                case '%':
-                {
-                    int itemID = Tools.GetCharm(_itemLists, 0, 99);
-                    target.GainItem(itemID, 1);
-                    toRespond = toRespond.Replace("%",
-                        emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
-                    break;
-                }
-                case '¡':
-                {
-                    int itemID = Tools.GetCharm(_itemLists, 0, 199);
-                    target.GainItem(itemID, 1);
-                    toRespond = toRespond.Replace("¡",
-                        emoji ? $"1{_items[itemID].Emoji}" : $"1 **{_items[itemID].Name}**");
-                    break;
-                }
-                case '*':
-                {
-                    user.GainItem(10, 1);
-                    toRespond = toRespond.Replace("*", emoji ? $"1{_items[10].Emoji}" : $"1 **{_items[10].Name}**");
-                    break;
-                }
-                case '•':
-                {
-                    target.GainItem(10, 1);
-                    toRespond = toRespond.Replace("•", emoji ? $"1{_items[10].Emoji}" : $"1 **{_items[10].Name}**");
-                    break;
-                }
-            }
-        }
+            .Replace("$user", $"<@{user.User.ID}>")
+            .Replace("$target", $"<@{target.User.ID}>");
 
         EmbedBuilder embay = new EmbedBuilder()
             .WithTitle("Magik Time!")
             .WithDescription(toRespond)
             .WithFooter($"Magik by gemBOT: {power} power!")
-            .WithColor(new Color((uint)(user.GetSetting("magikRandomColor", 1) switch
+            .WithColor(new Color((uint)(user.User.GetSetting("magikRandomColor", 1) switch
             {
-                0 => user.GetSetting("magikColor", 13107400), _ => (ulong)_rand.Next(16777216)
+                0 => user.User.GetSetting("magikColor", 13107400), _ => (ulong)_rand.Next(16777216)
             })));
         string topText = power switch
         {
@@ -925,12 +974,13 @@ public class GemBot
             2 => "Magik Power!",
             3 => "Double thin air Magiked!",
             4 => "Magik! Magik! Magik!",
-            5 => "Sparks shoot out of your wand, and...",
+            5 => "Sparks shoot out of your wand, and... (my challenge: can you get this text WITHOUT a wand?)",
             6 => "Magik sparks shoot out of your wand, and...",
             7 => "Okay, I know you did an elaborate setup to get this text.",
             8 => "A Magik ball shoots out of your wand, and...",
             9 => "A large Magik Ball shoots ouf of your Magik wand, and Magik happened...",
-            10 => "AI AI AI AI AI AI - every big tech CEO ever, because they can't do Magik as good as you...",
+            10 => "**Sparks shoot out of your wand**, *and*... ||this text is tied to your power||",
+            11 => "Do people even read this text? With the strat you clearly have, probably not",
             _ => "You're probably cheating at this point..."
         };
         await command.RespondAsync(topText, embed: embay.Build());
@@ -1501,13 +1551,13 @@ public class GemBot
             <= 3110 => 120-((uint)effect-1910)/20,
             <= 5210 => 60-((uint)effect-3110)/35,
             _ => 0
-        };
+        } + (uint)user.GetStat("play");
         if (await user.OnCoolDown("play", Tools.CurrentTime(), timeoutFor))
         {
             throw new Cooldown(user.CoolDowns["play"]);
         }
         user.IncreaseStat("play", 1);
-        UInt128 power = user.GetStat("play");
+        uint power = (uint)user.GetStat("play");
         int roll = _rand.Next(20)+1;
         string text = $"gemBOT could not resolve text for power {power} and d20 roll {roll}";
         string header = "Play Video Games!";
@@ -1723,11 +1773,9 @@ public class GemBot
                     int donated = 0;
                     for (int i = 0; i < viewers; i++)
                     {
-                        int chance = _rand.Next(roll);
-                        int max = _rand.Next(40);
-                        if (chance <= max) continue;
+                        if (_rand.Next(20) < 19) continue;
                         donaters += 1;
-                        donated += chance;
+                        donated += _rand.Next(roll);
                     }
                     text = "**Stream Stats**:" +
                            $"\n> {viewers} viewers" +
@@ -1743,59 +1791,55 @@ public class GemBot
         }
         else if (power <= 128)
         {
-            int viewers = (int)power*2 + 5*roll;
+            int viewers = (int)power + 3*roll;
             int adBreaks = 4;
-            int adbBeakMoney = viewers/20;
+            int adBreakMoney = viewers/20;
             int adBreakValue = 0;
             int donaters = 0;
             int donated = 0;
             for (int i = 0; i < viewers; i++)
             {
-                int chance = _rand.Next(roll);
-                int max = _rand.Next(39);
-                if (chance <= max) continue;
+                if (_rand.Next(25) < 24) continue;
                 donaters += 1;
-                donated += chance;
+                donated += _rand.Next(roll);
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
                    $"\n> {roll} rng" +
-                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} diamonds each): {adBreaks*adbBeakMoney}{diamonds}" +
+                   $"\n> {adBreaks} ad breaks ({adBreakMoney} diamonds each): {adBreaks*adBreakMoney}{diamonds}" +
                    $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-            user.Add(adBreaks * adbBeakMoney, adBreakValue);
-            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(adBreaks * adBreakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adBreakMoney * (int)Math.Pow(10, adBreakValue));
             user.Add(donated, 0);
             user.Increase("earned", donated);
         }
         else if (power <= 256)
         {
-            int viewers = (int)power*3 + 6*roll;
+            int viewers = (int)power + 6*roll;
             const int adBreaks = 4;
-            int adbBeakMoney = viewers/200;
-            const int adBreakValue = 1;
+            int adBeakMoney = viewers/19;
+            const int adBreakValue = 0;
             int donaters = 0;
             int donated = 0;
             for (int i = 0; i < viewers; i++)
             {
-                int chance = _rand.Next(roll);
-                int max = _rand.Next(39);
-                if (chance <= max) continue;
+                if (_rand.Next(30) < 29) continue;
                 donaters += 1;
-                donated += chance;
+                donated += _rand.Next(roll);
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
                    $"\n> {roll} rng" +
-                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} emeralds each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
+                   $"\n> {adBreaks} ad breaks ({adBeakMoney} emeralds each): {adBreaks*adBeakMoney}{cur[adBreakValue]}" +
                    $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
-            user.Add(adBreaks * adbBeakMoney, adBreakValue);
-            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(adBreaks * adBeakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adBeakMoney * (int)Math.Pow(10, adBreakValue));
             user.Add(donated, 0);
             user.Increase("earned", donated);
         }
         else if (power <= 512)
         {
-            int viewers = (int)power*5 + 6*roll;
+            int viewers = (int)power + 10*roll;
             const int adBreaks = 4;
             int adbBeakMoney = viewers/190;
             const int adBreakValue = 1;
@@ -1803,11 +1847,9 @@ public class GemBot
             int donated = 0;
             for (int i = 0; i < viewers; i++)
             {
-                int chance = _rand.Next(roll);
-                int max = _rand.Next(38);
-                if (chance <= max) continue;
+                if (_rand.Next(32) < 31) continue;
                 donaters += 1;
-                donated += chance;
+                donated += _rand.Next(roll);
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1821,7 +1863,7 @@ public class GemBot
         }
         else if (power <= 1024)
         {
-            int viewers = (int)power*7 + 100*roll;
+            int viewers = (int)power + 100*roll;
             const int adBreaks = 4;
             int adbBeakMoney = viewers/190;
             const int adBreakValue = 1;
@@ -1829,11 +1871,9 @@ public class GemBot
             int donated = 0;
             for (int i = 0; i < viewers; i++)
             {
-                int chance = _rand.Next(roll);
-                int max = _rand.Next(45);
-                if (chance <= max) continue;
+                if (_rand.Next(32) < 31) continue;
                 donaters += 1;
-                donated += chance;
+                donated += _rand.Next(roll);
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1847,19 +1887,41 @@ public class GemBot
         }
         else if (power <= 2048)
         {
-            int viewers = (int)power*10 + 100*roll;
+            int viewers = (int)power + 150*roll;
             const int adBreaks = 5;
-            int adbBeakMoney = viewers/1650;
+            int adbBeakMoney = viewers/165;
+            const int adBreakValue = 1;
+            int donaters = 0;
+            int donated = 0;
+            for (int i = 0; i < viewers; i++)
+            {
+                if (_rand.Next(32) < 31) continue;
+                donaters += 1;
+                donated += _rand.Next(roll);
+            }
+            text = "**Stream Stats**:" +
+                   $"\n> {viewers} viewers" +
+                   $"\n> {roll} rng" +
+                   $"\n> {adBreaks} ad breaks ({adbBeakMoney} sapphires each): {adBreaks*adbBeakMoney}{cur[adBreakValue]}" +
+                   $"\n> {donaters} viewers donated a total of {donated}{diamonds}";
+            user.Add(adBreaks * adbBeakMoney, adBreakValue);
+            user.Increase("earned", adBreaks * adbBeakMoney * (int)Math.Pow(10, adBreakValue));
+            user.Add(donated, 0);
+            user.Increase("earned", donated);
+        }
+        else if (power <= 4096)
+        {
+            int viewers = (int)power + 250*roll;
+            const int adBreaks = 5;
+            int adbBeakMoney = viewers/1200;
             const int adBreakValue = 2;
             int donaters = 0;
             int donated = 0;
             for (int i = 0; i < viewers; i++)
             {
-                int chance = _rand.Next(roll);
-                int max = _rand.Next(35);
-                if (chance <= max) continue;
+                if (_rand.Next(35) < 34) continue;
                 donaters += 1;
-                donated += chance;
+                donated += _rand.Next(roll);
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1873,19 +1935,17 @@ public class GemBot
         }
         else
         {
-            int viewers = (int)power*12 + 500*roll;
+            int viewers = (int)power + 350*roll;
             const int adBreaks = 5;
-            int adbBeakMoney = viewers/1200;
+            int adbBeakMoney = viewers/1000;
             const int adBreakValue = 2;
             int donaters = 0;
             int donated = 0;
             for (int i = 0; i < viewers; i++)
             {
-                int chance = _rand.Next(roll);
-                int max = _rand.Next(35);
-                if (chance <= max) continue;
+                if (_rand.Next(35) < 34) continue;
                 donaters += 1;
-                donated += chance;
+                donated += _rand.Next(roll);
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -2156,7 +2216,7 @@ public class GemBot
         int tokens = 1;
         for (int i = 0; i < 5; i++)
         {
-            if (_tokenShop.PurchasedReward(user.ID, i)) continue;
+            if (_tokenShop.PurchasedReward(user.ID, i)) { tokens *= 10; continue;}
             DailyTokenRewards rewards = _tokenShop.Rewards[i];
             string rewardString = string.Empty;
             foreach (DailyTokenReward reward in rewards.Rewards)
@@ -2264,17 +2324,25 @@ public class GemBot
                             //Gain 6 of currency (23%)
                             coinsGained += 6;
                             break;
+                        case <= 74:
+                            //Gain 10 of currency (8%)
+                            coinsGained += 10;
+                            break;
                         case <= 88:
-                            //Gain a charm (22%)
-                            itemsGained[Tools.GetCharm(_itemLists, spinID, 12, _rand)]++;
+                            //Gain a charm (1 gem if ruby, 2 gems if amber) (14%)
+                            itemsGained[Tools.GetCharm(_itemLists, spinID, 7, _rand)]++;
+                            if (spinID >= 3)
+                            {
+                                coinsGained += spinID - 2;
+                            }
                             break;
                         case <= 92:
-                            //Gain 9^rarity tickets (4%)
-                            itemsGained[21] += (int)Math.Pow(9, spinID);
+                            //Gain 11^rarity tickets (4%)
+                            itemsGained[21] += (int)Math.Pow(11, spinID);
                             break;
                         case <= 95:
-                            //Gain 100 of currency (3%)
-                            coinsGained += 100;
+                            //Gain 65 of currency (3%)
+                            coinsGained += 65;
                             break;
                         case <= 97:
                             //Gain 5 x current coin (2%)
@@ -2320,58 +2388,49 @@ public class GemBot
     {
         CachedUser user = await GetUser(command.User.Id);
         user.NotificationsID++;
-        List<Embed> embeds = [];
-        int notificationPoint = 1;
-        EmbedBuilder current = new EmbedBuilder().WithTitle("Notifications");
-        string curField = string.Empty;
         int notificationsAmount = 0;
-        foreach (string notification in user.Notifications)
+        EmbedBuilder embay = new EmbedBuilder().WithTitle("Notifications").WithColor(new Color((uint) user.User.GetSetting("uiColor", 3287295)));;
+        Dictionary<string, List<CachedUser.Notification>> notificationsDict = new();
+        user.ConsolidateNotifications();
+        foreach (CachedUser.Notification notification in user.Notifications)
         {
-            if ((curField.Length + notification.Length) > EmbedFieldBuilder.MaxFieldValueLength)
-            {
-                if (embeds.Count >= 10)
-                {
-                    break;
-                }
-                if (current.Fields.Count >= 4)
-                {
-                    embeds.Add(current.Build());
-                    current = new EmbedBuilder().WithTitle("Notifications");
-                }
-                current.AddField($"Notifications {notificationPoint}", curField);
-                curField = string.Empty;
-                if (current.Fields.Count >= 4)
-                {
-                    embeds.Add(current.Build());
-                    current = new EmbedBuilder().WithTitle("Notifications");
-                }
-                notificationPoint++;
-                if (embeds.Count >= 10)
-                {
-                    break;
-                }
-            }
-            if (curField != string.Empty) curField += "\n";
-            curField += notification;
-            notificationsAmount++;
+            if (!notificationsDict.ContainsKey(notification.Source)) notificationsDict[notification.Source] = [notification];
+            else notificationsDict[notification.Source].Add(notification);
         }
-        string text = $"View all ({notificationsAmount}) your notifications";
-        if (embeds.Count == 10)
+        List<CachedUser.Notification> otherNotifications= new();
+        foreach (KeyValuePair<string, List<CachedUser.Notification>> kvp in notificationsDict)
         {
-            text = $"You have more notifications than this... Showing first {notificationsAmount} of {user.Notifications.Count}.";
+            if (kvp.Value.Count <= 0) continue;
+            if (kvp.Value.Count == 1)
+            {
+                otherNotifications.Add(kvp.Value[0]);
+                continue;
+            }
+            string curField = "";
+            foreach (CachedUser.Notification notif in kvp.Value)
+            {
+                if (curField != string.Empty) curField += "\n";
+                string reward = (notif.Reward >= 0) switch {true => _items[notif.Reward].Emoji, false => _currency[(notif.Reward * -1) - 1]};
+                curField += $" > {notif.Amount}{reward}";
+                notificationsAmount++;
+            }
+            embay.AddField($"You {kvp.Value[0].Source}:", curField);
         }
-        else
+        if (otherNotifications.Count > 0)
         {
-            if (curField != string.Empty)
+            string curField = "";
+            foreach (CachedUser.Notification notif in otherNotifications)
             {
-                current.AddField($"Notifications {notificationPoint}", curField);
+                if (curField != string.Empty) curField += "\n";
+                string reward = (notif.Reward >= 0) switch {true => _items[notif.Reward].Emoji, false => _currency[(notif.Reward * -1) - 1]};
+                curField += $" > You {notif.Source} {notif.Amount}{reward}";
+                notificationsAmount++;
             }
-            if (current.Fields.Count > 0)
-            {
-                embeds.Add(current.Build());
-            }
+            embay.AddField("Other Notifications", curField);
         }
-        await command.RespondAsync(text, embeds: embeds.ToArray(), 
+        string text = "View all your notifications";
+        Embed embed = embay.Build();
+        await command.RespondAsync(text, embed: embed, 
             components: new ComponentBuilder()
                 .WithButton("Delete Notifications",
                     $"notifications-clear|{user.NotificationsID}|{notificationsAmount}",
@@ -2594,7 +2653,121 @@ public class GemBot
         }
         await (await command.GetOriginalResponseAsync()).DeleteAsync();
     }
-    
+    private async Task SettingsCommand(SocketSlashCommand command)
+    {
+        SlashCommandBuilder setBuilder = new SlashCommandBuilder()
+            .WithName("setting")
+            .WithDescription("Set a setting")
+            .AddOption(new SlashCommandOptionBuilder().WithName("main")
+                .WithType(ApplicationCommandOptionType.SubCommandGroup)
+                .WithDescription("The main settings for gemBOT")
+                .AddOption(new SlashCommandOptionBuilder().WithName("auto_delete")
+                    .WithDescription("How long before command responses sent by gemBOT auto-delete (after last auto-update)")
+                    .WithType(ApplicationCommandOptionType.SubCommand)
+                    .AddOption(new SlashCommandOptionBuilder().WithName("value")
+                        .WithDescription("Set Setting: delayBeforeDelete. WARNING: commands will not delete after bot refresh.")
+                        .WithType(ApplicationCommandOptionType.Integer)
+                        .AddChoice("Never delete it", 0)
+                        .AddChoice("2 minutes", 2)
+                        .AddChoice("5 minutes", 5)
+                        .AddChoice("15 minutes", 15)
+                        .AddChoice("30 minutes", 30)
+                        .AddChoice("1 hour", 60)
+                        .AddChoice("2 hours", 120)
+                        .AddChoice("3 hours", 180)
+                        .AddChoice("5 hours", 300)
+                        .AddChoice("8 hours", 480)
+                        .AddChoice("12 hours", 720)
+                        .AddChoice("1 day", 1440)
+                        .AddChoice("2 days", 2880)
+                    )
+                )
+            );
+        string group = command.Data.Options.First().Name;
+        User user = await GetUser(command.User.Id);
+        if (group == "view")
+        {
+            string viewText = "";
+            foreach (KeyValuePair<string, ulong> viewSetting in user.Settings)
+            {
+                if (viewText != "") viewText += "\n";
+                viewText += $"> {viewSetting.Key}: {viewSetting.Value}";
+            }
+            await command.RespondAsync(
+                embed: new EmbedBuilder().WithTitle("Your settings").WithDescription(viewText).Build(),
+                ephemeral: true);
+            return;
+        }
+        string subGroup = command.Data.Options.First().Options.First().Name;
+        IReadOnlyCollection<SocketSlashCommandDataOption>? dat = command.Data.Options.First().Options.First().Options;
+        string setting = "error_error";
+        ulong value = 0;
+        switch (group)
+        {
+            case "theme":
+                switch (subGroup)
+                {
+                    case "bank_left":
+                        setting = "bankLeftStyle";
+                        value = (ulong)(long)dat.First().Value;
+                        break;
+                    case "bank_right":
+                        setting = "bankRightStyle";
+                        value = (ulong)(long)dat.First().Value;
+                        break;
+                    case "bank_show_red":
+                        setting = "bankShowRed";
+                        value = ((bool)dat.First().Value) switch { true => 1, false => 0 };
+                        break;
+                    case "beg_randomize_color":
+                        setting = "begRandom";
+                        value = ((bool)dat.First().Value) switch { true => 1, false => 0 };
+                        break;
+                    case "beg_color":
+                        setting = "begColor";
+                        SocketSlashCommandDataOption[] begRGB = dat.ToArray();
+                        value = new Color((int)(long)begRGB[0].Value, (int)(long)begRGB[1].Value, (int)(long)begRGB[2].Value).RawValue;
+                        break;
+                    case "magik_randomize_color":
+                        setting = "magikRandom";
+                        value = ((bool)dat.First().Value) switch { true => 1, false => 0 };
+                        break;
+                    case "magik_color":
+                        setting = "magikColor";
+                        SocketSlashCommandDataOption[] magikRGB = dat.ToArray();
+                        value = new Color((int)(long)magikRGB[0].Value, (int)(long)magikRGB[1].Value, (int)(long)magikRGB[2].Value)
+                            .RawValue;
+                        break;
+                    case "color":
+                        setting = "uiColor";
+                        SocketSlashCommandDataOption[] uiRGB = dat.ToArray();
+                        value = new Color((int)((long)uiRGB[0].Value), (int)((long)uiRGB[1].Value), (int)((long)uiRGB[2].Value)).RawValue;
+                        break;
+                    default:
+                        await command.RespondAsync($"Setting {group} - {subGroup} not found", ephemeral: true);
+                        return;
+                }
+                break;
+            case "main":
+                switch (subGroup)
+                {
+                    case "auto_delete":
+                        setting = "delayBeforeDelete";
+                        value = (ulong)(long)dat.First().Value;
+                        break;
+                    default:
+                        await command.RespondAsync($"Setting {group} - {subGroup} not found", ephemeral: true);
+                        return;
+                }
+                break;
+            default:
+                await command.RespondAsync($"Setting group {group} not found", ephemeral: true);
+                return;
+        }
+        user.SetSetting(setting, value);
+        await user.Save();
+        await command.RespondAsync($"Set {setting} to {value}!");
+    }
     
     private async Task InventoryButton(SocketMessageComponent component, string settings)
     {
@@ -3675,7 +3848,6 @@ public class GemBot
         }
     }
     
-    
     private Task TextMessageHandlerSetup(SocketMessage message)
     {
         _ = TextMessageHandler(message);
@@ -4096,30 +4268,9 @@ public class GemBot
                     )
                 )
             )
-            .AddOption(new SlashCommandOptionBuilder().WithName("main")
-                .WithType(ApplicationCommandOptionType.SubCommandGroup)
-                .WithDescription("The main settings for gemBOT")
-                .AddOption(new SlashCommandOptionBuilder().WithName("auto_delete")
-                    .WithDescription("How long before command responses sent by gemBOT auto-delete (after last auto-update)")
-                    .WithType(ApplicationCommandOptionType.SubCommand)
-                    .AddOption(new SlashCommandOptionBuilder().WithName("value")
-                        .WithDescription("Set Setting: delayBeforeDelete. WARNING: commands will not delete after bot refresh.")
-                        .WithType(ApplicationCommandOptionType.Integer)
-                        .AddChoice("Never delete it", 0)
-                        .AddChoice("2 minutes", 2)
-                        .AddChoice("5 minutes", 5)
-                        .AddChoice("15 minutes", 15)
-                        .AddChoice("30 minutes", 30)
-                        .AddChoice("1 hour", 60)
-                        .AddChoice("2 hours", 120)
-                        .AddChoice("3 hours", 180)
-                        .AddChoice("5 hours", 300)
-                        .AddChoice("8 hours", 480)
-                        .AddChoice("12 hours", 720)
-                        .AddChoice("1 day", 1440)
-                        .AddChoice("2 days", 2880)
-                    )
-                )
+            .AddOption(new SlashCommandOptionBuilder().WithName("view")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .WithDescription("View all your currently set settings in gemBot")
             );
         SlashCommandBuilder craft = new SlashCommandBuilder()
             .WithName("craft")
@@ -5325,7 +5476,7 @@ public class GemBot
                                     _ => 39
                                 };
                                 user.User.GainItem(itemId, amountDropped);
-                                user.Notifications.Add($"You gained {amountDropped}{_items[itemId].Emoji} ({_items[itemId].Name}) from mining.");
+                                user.Notifications.Add(new CachedUser.Notification(itemId, amountDropped, "mined"));
                             }
                             else
                             {
@@ -5339,7 +5490,7 @@ public class GemBot
                                     _ => 0
                                 };
                                 user.User.Add(amountDropped, value);
-                                user.Notifications.Add($"You gained {amountDropped}{_currency[value]} from mining.");
+                                user.Notifications.Add(new CachedUser.Notification((-value)-1, amountDropped, "mined"));
                             }
                             await user.User.Save();
                         }
@@ -5370,71 +5521,8 @@ public class GemBot
     private async Task CraftTick()
     {
         foreach (CachedUser user in _users.Values)
-        { 
-           user.User.CheckFurnaces(Tools.CharmEffect(["FurnaceSlots"], _items, user) + FurnaceConst);
-           foreach (CraftingRecipe.Furnace furnace in user.User.Furnaces)
-           {
-               if (furnace.Crafting)
-               {
-                   if (furnace.TimeLeft > 1) furnace.TimeLeft--;
-                   else
-                   {
-                       user.User.GainItem(furnace.NextItem, furnace.Amount);
-                       user.Notifications.Add($"You gained {furnace.Amount}{_items[furnace.NextItem].Emoji}");
-                       furnace.Crafting = false;
-                   }
-               }
-               else
-               {
-                   if (user.NextCrafting == null)
-                   {
-                       // ReSharper disable once UseCollectionExpression
-                       user.NextCrafting = new List<Tuple<int, int>>();
-                       continue;
-                   }
-                   
-                   if (user.NextCrafting.Count <= 0) continue;
-                   if (user.NextCrafting[0].Item2 <= 0)
-                   {
-                       user.NextCrafting.RemoveAt(0);
-                       continue;
-                   }
-
-                   CraftingRecipe recipe = _craftingRecipes[user.NextCrafting[0].Item1];
-                   bool failedRecipe = user.User.Gems[recipe.PriceValue] < recipe.Price;
-                   if (failedRecipe)
-                   {
-                       Tuple<int, int> failedCraft = user.NextCrafting[0];
-                       user.NextCrafting.RemoveAt(0);
-                       user.NextCrafting.Add(failedCraft);
-                       continue;
-                   }
-                   foreach (CraftingRecipe.RecipeRequirements requirement in recipe.Requirements)
-                   {
-                       if (failedRecipe) break;
-                       if (user.User.Inventory[requirement.Item] >= requirement.Amount) continue;
-                       Tuple<int, int> failedCraft = user.NextCrafting[0];
-                       user.NextCrafting.RemoveAt(0);
-                       user.NextCrafting.Add(failedCraft);
-                       failedRecipe = true;
-                       break;
-                   }
-                   if (failedRecipe) continue;
-                   user.NextCrafting[0] = 
-                       new Tuple<int, int>(user.NextCrafting[0].Item1, user.NextCrafting[0].Item2 - 1);
-                   if (user.NextCrafting[0].Item2 <= 0)
-                   {
-                       user.NextCrafting.RemoveAt(0);
-                   }
-                   user.User.Add(recipe.Price * -1, recipe.PriceValue);
-                   foreach (CraftingRecipe.RecipeRequirements requirement in recipe.Requirements)
-                   {
-                       user.User.GainItem(requirement.Item, -1 * requirement.Amount);
-                   }
-                   await user.User.Save();
-                   furnace.UpdateFromCraftingRecipe(recipe);
-               }
-           }
+        {
+            if (user.CraftTick(_items, _craftingRecipes, FurnaceConst)) await user.User.Save();
         }
     }
     private async Task SaveDropsTick()
