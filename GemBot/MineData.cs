@@ -105,25 +105,25 @@ public class MineChunk
         {
             MineBlock stone = new MineBlock
             {
-                Durability = 30*(uint)layer+300, //1 min + 6 sec per layer (on power 5)
+                Durability = 60*(uint)layer+300, //1 min + 12 sec per layer (on power 5)
                 DropAmount = (byte)(layer + random.Next(6))
             };
             MineBlock diamond = new MineBlock
             {
                 Durability = 1200, //4 min (on power 5)
-                DropAmount = (byte)(layer / 3 + random.Next(5)),
+                DropAmount = (byte)(layer / 2 + random.Next(5)),
                 Type = BlockType.Diamonds
             };
             MineBlock diamondCoin = new MineBlock
             {
                 Durability = 3000, //10 min (on power 5)
-                DropAmount = (byte)(layer / 9 + random.Next(5)),
+                DropAmount = (byte)(layer / 6 + random.Next(5)),
                 Type = BlockType.DiamondCoin
             };
             MineBlock diamondKey = new MineBlock
             {
                 Durability = 6000, //20 min (on power 5)
-                DropAmount = (byte)(layer / 30 + random.Next(1)),
+                DropAmount = (byte)(layer / 20 + random.Next(1)),
                 Type = BlockType.DiamondKey
             };
             MineBlock emerald = new MineBlock
@@ -141,7 +141,7 @@ public class MineChunk
             MineBlock emeraldKey = new MineBlock
             {
                 Durability = 18000, //1 hour (on power 5)
-                DropAmount = 1,
+                DropAmount = (byte)(layer / 90),
                 Type = BlockType.EmeraldKey
             };
             MineBlock sapphire = new MineBlock()
@@ -162,12 +162,6 @@ public class MineChunk
                 DropAmount = 1,
                 Type = BlockType.SapphireKey
             };
-            MineBlock ruby = new MineBlock()
-            {
-                Durability = 42000, //2 hour 20 min (on power 5)
-                DropAmount = (byte)(layer / 81 + random.Next(2)),
-                Type = BlockType.Rubies
-            };
             MineBlock rubyCoin = new MineBlock
             {
                 Durability = 63000, //3 hour 30 min (on power 5)
@@ -180,18 +174,6 @@ public class MineChunk
                 DropAmount = 1,
                 Type = BlockType.RubyKey
             };
-            MineBlock amber = new MineBlock()
-            {
-                Durability = 108000, //6 hour (on power 5)
-                DropAmount = 1,
-                Type = BlockType.Amber
-            };
-            MineBlock amberCoin = new MineBlock
-            {
-                Durability = 360000, //20 hour (on power 5)
-                DropAmount = 1,
-                Type = BlockType.AmberCoin
-            };
             MineBlock amberKey = new MineBlock
             {
                 Durability = 864000, //48 hour (on power 5)
@@ -201,25 +183,22 @@ public class MineChunk
             List<MineBlock> thisLayer = [];
             for (int i = 0; i < 20; i++)
             {
-                thisLayer.Add((random.Next(layer, layer*3+777) switch
+                thisLayer.Add((random.Next(layer, layer*3+540) switch
                 {
                     <= 200 => air, //200
                     <= 850 => stone, //650
                     <= 950 => diamond, //100
-                    <= 1040 => emerald, //90
-                    <= 1100 => diamondCoin, //60
-                    <= 1180 => sapphire, //80
-                    <= 1234 => emeraldCoin, //54
-                    <= 1244 => diamondKey, //10
-                    <= 1314 => ruby, //70
-                    <= 1362 => sapphireCoin, //48
-                    <= 1371 => emeraldKey, //9
-                    <= 1431 => amber, //60
-                    <= 1473 => rubyCoin, //42
-                    <= 1481 => sapphireKey, //8
-                    <= 1517 => amberCoin, //36
-                    <= 1524 => rubyKey, //7
-                    <= 1530 => amberKey, //6
+                    <= 1030 => emerald, //80
+                    <= 1080 => diamondCoin, //50
+                    <= 1140 => sapphire, //60
+                    <= 1180 => emeraldCoin, //40
+                    <= 1200 => diamondKey, //20
+                    <= 1230 => sapphireCoin, //30
+                    <= 1246 => emeraldKey, //16
+                    <= 1266 => rubyCoin, //20
+                    <= 1278 => sapphireKey, //12
+                    <= 1286 => rubyKey, //8
+                    <= 1290 => amberKey, //4
                     _ => new MineBlock(){Left = 0, Type = BlockType.Air}
                 }).Copy());
             }

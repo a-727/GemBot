@@ -14,26 +14,26 @@ public class DailyTokenShop
     public static DailyTokenShop Generate(List<int> charmSets, uint date, Random? randomParam = null)
     {
         Random random = randomParam ?? new Random();
-        int money = 0; List<byte> items = new List<byte>(); int left = 15;
+        int money = 0; List<byte> items = new List<byte>(); int left = 30;
         while (left > 0)
         {
-            int max = left switch { >= 13 => 20, >= 3 => 19, >= 2 => 15, _ => 10};
+            int max = left switch { >= 26 => 20, >= 6 => 19, >= 3 => 15, _ => 10};
             switch (random.Next(max))
             {
                 case >= 19:
                     items.Add(16);
-                    left -= 13;
+                    left -= 26;
                     break;
                 case >= 15:
                     items.Add((byte)charmSets[random.Next(charmSets.Count)]);
-                    left -= 3;
+                    left -= 6;
                     break;
                 case >= 10:
                     items.Add(0);
-                    left -= 2;
+                    left -= 3;
                     break;
                 default:
-                    money += 5;
+                    money += 3;
                     left--;
                     break;
             }
@@ -78,7 +78,13 @@ public class DailyTokenRewards
         rewards.Add(new DailyTokenRewardMoney(value) {Amount = money});
         foreach (byte id in items)
         {
-            rewards.Add(new DailyTokenRewardItem(id + value));
+            int index = rewards.FindIndex((reward) =>
+            {
+                if (reward is not DailyTokenRewardItem item) return false;
+                return item.Item == id;
+            });
+            if (index == -1) rewards.Add(new DailyTokenRewardItem(id + value));
+            else rewards[index].Amount++;
         }
         return new DailyTokenRewards(rewards, value);
     }

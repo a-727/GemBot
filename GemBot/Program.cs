@@ -10,32 +10,27 @@ namespace GemBot;
 
 /*
 TODO *
-* Other tasks
- * Buff beg rewards slightly
- * Slightly buff work
- * Slightly buff work failure
- * Add DM notifications
- * Add new Work interaction (24 red xs, one green check)
- * View and edit crafting cue
  * Redo keys (item rewards)
  * Increase Emerald through Amber Coin crafting times
- * Remove ambers and rubies and amber coins from /mine
- * Buff Diamond drop rates in /mine
- * Make better /mine ores rarer
- * Make /mine ores that other
- * Increase stone mining time at lower depths
- * Decrease coin price in daily token shop
- * Give coins for daily quests if you have crate, make crate rewards the default ones.
+ * Make Diamond-Amber coins require additional stone coins
+* Other tasks
+ * Add DM notifications
 * Done this update:
- * Fixed /help command
- * Written /settings command
- * Implement new /notification system
- * Changed /magik logic
- * Nerfed rate of charms from coins 22% -> 14%
- * Buffed charm upgrade rate from coins 1/12 -> 1/7
- * Nerfed lots of gems from coins 100 -> 65
- * Added new 8% 10 gems to coin loot pool
- * Nerfed play donations, nerfed play cooldown and viewers at higher tiers
+ * Fixed /play donation amounts can be less than zero
+ * Added new Work interaction (24 red xs, one green check)
+ * Added <-- and --> buttons on /craft recipes
+ * You can now view and edit the crafting cue
+ * Made better /mine ores rarer
+ * Removed ambers, rubies, and amber coins from /mine
+ * Increased stone mining time at lower depths
+ * Buffed Diamond drop rates in /mine
+ * Buffed beg rewards slightly
+ * Slightly buffed work
+ * Slightly buffed work failure
+ * Buffed /magik craft increase
+ * Decrease coin price in daily token shop, increased coin amount in daily token shop
+ * Make /mine ores that other players are mining red
+ * Give coins for daily quests if you have crate, make crate rewards the default ones.
  */
 public class NoTokenError : Exception { }
 public class UserNotFoundError() : Exception("The user was not found"){}
@@ -58,6 +53,7 @@ public static class Program
         {
             Directory.SetCurrentDirectory("..");
         }
+        Console.WriteLine("Booting up gemBot v1.4.0");
         GemBot gemBot = new GemBot();
         await gemBot.Main();
     }
@@ -361,23 +357,6 @@ public class GemBot
             {
                 _users[command.User.Id] = await Tools.UpdateTutorial(command.Data.Name, _tutorials, value, command);
             }
-
-            try
-            {
-                User user = await GetUser(command.User.Id);
-                int delay = (int)user.GetSetting("delayBeforeDelete", 60);
-                if (delay == 0)
-                {
-                    return;
-                }
-
-                await Task.Delay(TimeSpan.FromMinutes(delay));
-                await command.DeleteOriginalResponseAsync();
-            }
-            catch (HttpException e)
-            {
-                Console.WriteLine(e);
-            }
         }
         catch (Cooldown cool)
         {
@@ -558,8 +537,8 @@ public class GemBot
             throw new Cooldown(user.CoolDowns["beg"]);
         }
 
-        int mn = 5 + Tools.CharmEffect(["BegMin", "Beg", "GrindMin", "Grind", "Positive"], _items, user);
-        int mx = 9 + Tools.CharmEffect(["BegMax", "Beg", "GrindMax", "Grind", "Positive"], _items, user);
+        int mn = 7 + Tools.CharmEffect(["BegMin", "Beg", "GrindMin", "Grind", "Positive"], _items, user);
+        int mx = 10 + Tools.CharmEffect(["BegMax", "Beg", "GrindMax", "Grind", "Positive"], _items, user);
         int amnt = _rand.Next(mn, mx);
         int chanceRoll = _rand.Next(0, 200) + 1; //random number from 1 to 200
         user.Increase("commands", 1);
@@ -630,8 +609,8 @@ public class GemBot
         }
         int workNum = _rand.Next(255) + 1;
         cached.LastWork = (byte) workNum;
-        int jobRandom = _rand.Next(1);
-        EmbedBuilder embay = new EmbedBuilder().WithTitle("Work!");
+        int jobRandom = _rand.Next(2);
+        EmbedBuilder embay = new EmbedBuilder().WithTitle("Work!").WithColor((uint)user.GetSetting("uiColor", 3287295));
         ComponentBuilder components = new ComponentBuilder();
         string text = "View embed for more information.";
         switch (jobRandom)
@@ -662,6 +641,61 @@ public class GemBot
                     rowShapes.WithButton(customId: customIDShapes, emote: Emoji.Parse(chosenList[i]), style: ButtonStyle.Primary);
                 }
                 components.AddRow(rowShapes);
+                await command.ModifyOriginalResponseAsync((properties) =>
+                {
+                    properties.Embed = embay.Build();
+                    properties.Components = components.Build();
+                });
+                break;
+            case 1:
+                int checkX = _rand.Next(5);
+                int checkY = _rand.Next(5);
+                for (int i = 0; i < 5; i++)
+                {
+                    ActionRowBuilder rowBuilder = new ActionRowBuilder();
+                    for (int j = 0; j < 5; j++)
+                    {
+                        if (i != checkY || j != checkX) rowBuilder.WithButton(new ButtonBuilder()
+                            .WithEmote(Emoji.Parse(":heavy_multiplication_x:"))
+                            .WithStyle(ButtonStyle.Danger)
+                            .WithCustomId($"basic-disabled|{i*5+j}")
+                            .WithDisabled(true)
+                        );
+                        else rowBuilder.WithButton(
+                            new ButtonBuilder()
+                                .WithEmote(Emoji.Parse(":heavy_check_mark:"))
+                                .WithStyle(ButtonStyle.Success)
+                                .WithCustomId($"basic-disabled|{i*5+j}")
+                                .WithDisabled(true)
+                            );
+                    }
+                    components.AddRow(rowBuilder);
+                }
+                embay.WithDescription("Memorize the location of the checkmark");
+                await command.RespondAsync(embed: embay.Build(), components: components.Build());
+                await Task.Delay(6000);
+                embay.WithDescription("Click the button where the checkmark was");
+                components = new ComponentBuilder();
+                for (int i = 0; i < 5; i++)
+                {
+                    ActionRowBuilder rowBuilder = new ActionRowBuilder();
+                    for (int j = 0; j < 5; j++)
+                    {
+                        if (i != checkY || j != checkX) rowBuilder.WithButton(
+                            new ButtonBuilder()
+                                .WithEmote(Emoji.Parse(":question:"))
+                                .WithStyle(ButtonStyle.Secondary)
+                                .WithCustomId($"work-failure|{workNum}|{Tools.ShowEmojis(command, Settings.BotID(), _client)}|{5*i+j}")
+                            );
+                        else rowBuilder.WithButton(
+                            new ButtonBuilder()
+                                .WithEmote(Emoji.Parse(":question:"))
+                                .WithStyle(ButtonStyle.Secondary)
+                                .WithCustomId($"work-success|{workNum}|{Tools.ShowEmojis(command, Settings.BotID(), _client)}|{5*i+j}")
+                        );
+                    }
+                    components.AddRow(rowBuilder);
+                }
                 await command.ModifyOriginalResponseAsync((properties) =>
                 {
                     properties.Embed = embay.Build();
@@ -861,7 +895,7 @@ public class GemBot
             chances.Add(new MagikReward(power-4, (mUser, mTarget) =>
             {
                 bool didSomethingUser = false;
-                for (int i = 0; i < 240 + (power*5); i++)
+                for (int i = 0; i < 360 + (power*15); i++)
                 {
                     if (mUser.CraftTick(_items, _craftingRecipes, FurnaceConst)) didSomethingUser = true;
                 }
@@ -873,7 +907,7 @@ public class GemBot
                 if (mUser.User.ID != mTarget.User.ID)
                 {
                     bool didSomethingTarget = false;
-                    for (int i = 0; i < 120 + (power * 3); i++)
+                    for (int i = 0; i < 240 + (power * 10); i++)
                     {
                         if (mTarget.CraftTick(_items, _craftingRecipes, FurnaceConst)) didSomethingTarget = true;
                     }
@@ -885,19 +919,19 @@ public class GemBot
 
                     string toReturnT = didSomethingUser switch
                     {
-                        true => $"$user's crafting was sped up by {240 + (power * 5)} seconds",
+                        true => $"$user's crafting was sped up by {360 + (power * 15)} seconds",
                         false => $"$user gained {70 + power * 6}$diamonds"
                     };
                     toReturnT += didSomethingTarget switch
                     {
-                        true => $"\n > And, $target's crafting was sped up by {120 + (power * 3)} seconds)",
+                        true => $"\n > And, $target's crafting was sped up by {240 + (power * 10)} seconds",
                         false => $"\n > And, $target gained {40 + 2*power}$diamonds"
                     };
                     return toReturnT;
                 }
                 string toReturn = didSomethingUser switch
                 {
-                    true => $"$user's crafting was sped up by {240 + (power * 5)} seconds",
+                    true => $"$user's crafting was sped up by {360 + (power * 15)} seconds",
                     false => $"$user gained {70 + power * 6}$diamonds"
                 } + "\n > The target could've gained extra rewards if you targeted somebody.";
                 return toReturn;
@@ -1299,117 +1333,94 @@ public class GemBot
                     user.User.DailyQuestsCompleted[i] = true;
                     switch (i)
                     {
-                        case 0:
+                        case 0: 
+                            user.User.Add(120, 0);
+                            user.User.Increase("earned", 120);
+                            string currencyDiamonds = showEmoji switch { true => _currency[0], false => " **diamonds**" };
                             if (Tools.CharmEffect(["CommonQuests"], _items, user) > 0)
                             {
-                                user.User.Add(120, 0);
-                                user.User.Increase("earned", 120);
-                                string currency = showEmoji switch { true => _currency[0], false => " **diamonds**" };
-                                text.Add($"<@{user.User.ID}> earned 120{currency}");
+                                user.User.GainItem(0, 5);
+                                string coinCommon = showEmoji switch { true => _items[0].Emoji, false => $" **{_items[0].Name}**" };
+                                text.Add($"<@{user.User.ID}> earned 120{currencyDiamonds} + 5{coinCommon}!");
                             }
-                            else
-                            { 
-                                user.User.Add(60, 0);
-                                user.User.Increase("earned", 60);
-                                string currency = showEmoji switch { true => _currency[0], false => " **diamonds**" };
-                                text.Add($"<@{user.User.ID}> earned 60{currency}");
-                            }
+                            else text.Add($"<@{user.User.ID}> earned 120{currencyDiamonds}!");
                             break;
                         case 1:
+                            user.User.Add(20, 1);
+                            user.User.Increase("earned", 200);
+                            int charmIDUncommon = Tools.GetCharm(_itemLists, 0, 50, _rand);
+                            user.User.GainItem(charmIDUncommon, 1);
+                            string currencyUncommon = showEmoji switch { true => _currency[1], false => " **emeralds**" };
+                            string charm1Uncommon = showEmoji switch { true => _items[charmIDUncommon].Emoji, false => $" **{_items[charmIDUncommon].Name}**" };
                             if (Tools.CharmEffect(["UncommonQuests"], _items, user) > 0)
                             {
-                                user.User.Add(20, 1);
-                                user.User.Increase("earned", 200);
-                                int charmID = Tools.GetCharm(_itemLists, 0, 50, _rand);
-                                user.User.GainItem(charmID, 1);
-                                string currency = showEmoji switch { true => _currency[1], false => " **emeralds**" };
-                                string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
-                                text.Add($"<@{user.User.ID}> earned 20{currency} + 1{charm1}");
+                                user.User.GainItem(1, 4);
+                                string coinUncommon = showEmoji switch { true => _items[1].Emoji, false => $" **{_items[1].Name}**" };
+                                text.Add($"<@{user.User.ID}> earned 20{currencyUncommon} + 1{charm1Uncommon} + 4{coinUncommon}!");
                             }
-                            else
-                            {
-                                user.User.Add(40, 1);
-                                user.User.Increase("earned", 400);
-                                string currency = showEmoji switch { true => _currency[1], false => " **emeralds**" };
-                                text.Add($"<@{user.User.ID}> earned 40{currency}");
-                            }
+                            else text.Add($"<@{user.User.ID}> earned 20{currencyUncommon} + 1{charm1Uncommon}!");
                             break;
                         case 2:
+                            user.User.Add(19, 2);
+                            user.User.Increase("earned", 1900);
+                            int charmIDRare = Tools.GetCharm(_itemLists, 0, 32, _rand);
+                            user.User.GainItem(charmIDRare, 1);
+                            string currencyRare = showEmoji switch { true => _currency[2], false => " **sapphires**" };
+                            string charm1Rare = showEmoji switch { true => _items[charmIDRare].Emoji, false => $" **{_items[charmIDRare].Name}**" };
+                            int charmID2Rare = Tools.GetCharm(_itemLists, 0, 22, _rand);
+                            user.User.GainItem(charmID2Rare, 1);
+                            string charm2Rare = showEmoji switch { true => _items[charmID2Rare].Emoji, false => $" **{_items[charmID2Rare].Name}**"};
                             if (Tools.CharmEffect(["RareQuests"], _items, user) > 0)
                             {
-                                user.User.Add(19, 2);
-                                user.User.Increase("earned", 1900);
-                                int charmID = Tools.GetCharm(_itemLists, 0, 32, _rand);
-                                user.User.GainItem(charmID, 1);
-                                string currency = showEmoji switch { true => _currency[2], false => " **sapphires**" };
-                                string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
-                                int charmID2 = Tools.GetCharm(_itemLists, 0, 22, _rand);
-                                user.User.GainItem(charmID2, 1);
-                                string charm2 = showEmoji switch { true => _items[charmID2].Emoji, false => $" **{_items[charmID2].Name}**"};
-                                text.Add($"<@{user.User.ID}> earned 19{currency} + 1{charm1} + 1{charm2}");
+                                user.User.GainItem(2, 3);
+                                string coinRare = showEmoji switch { true => _items[2].Emoji, false => $" **{_items[2].Name}**" };
+                                text.Add($"<@{user.User.ID}> earned 19{currencyRare} + 1{charm1Rare} + 1{charm2Rare} + 3{coinRare}!");
                             }
-                            else
-                            {
-                                user.User.Add(19, 2);
-                                user.User.Increase("earned", 1900);
-                                int charmID = Tools.GetCharm(_itemLists, 0, 28, _rand);
-                                user.User.GainItem(charmID, 1);
-                                string currency = showEmoji switch { true => _currency[2], false => " **sapphires**" };
-                                string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
-                                text.Add($"<@{user.User.ID}> earned 19{currency} + 1{charm1}");
-                            }
+                            else text.Add($"<@{user.User.ID}> earned 19{currencyRare} + 1{charm1Rare} + 1{charm2Rare}!");
                             break;
                         case 3:
+                            user.User.Add(5, 3);
+                            user.User.Increase("earned", 5000);
+                            int charmIDEpic = Tools.GetCharm(_itemLists, 0, 9, _rand);
+                            user.User.GainItem(charmIDEpic, 1);
+                            string currencyEpic = showEmoji switch { true => _currency[3], false => " **rubies**" };
+                            string charm1Epic = showEmoji switch { true => _items[charmIDEpic].Emoji, false => $" **{_items[charmIDEpic].Name}**" };
+                            int charmID2Epic = Tools.GetCharm(_itemLists, 1, 17, _rand);
+                            user.User.GainItem(charmID2Epic, 1);
+                            string charm2Epic = showEmoji switch { true => _items[charmID2Epic].Emoji, false => $" **{_items[charmID2Epic].Name}**"};
                             if (Tools.CharmEffect(["EpikQuests"], _items, user) > 0)
                             {
-                                user.User.Add(5, 3);
-                                user.User.Increase("earned", 5000);
-                                int charmID = Tools.GetCharm(_itemLists, 0, 9, _rand);
-                                user.User.GainItem(charmID, 1);
-                                string currency = showEmoji switch { true => _currency[3], false => " **rubies**" };
-                                string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
-                                int charmID2 = Tools.GetCharm(_itemLists, 1, 17, _rand);
-                                user.User.GainItem(charmID2, 1);
-                                string charm2 = showEmoji switch { true => _items[charmID2].Emoji, false => $" **{_items[charmID2].Name}**"};
-                                text.Add($"<@{user.User.ID}> earned 5{currency} + 1{charm1} + 1{charm2}");
+                                user.User.GainItem(3, 2);
+                                string coinEpic = showEmoji switch { true => _items[3].Emoji, false => $" **{_items[3].Name}**" };
+                                text.Add($"<@{user.User.ID}> earned 5{currencyEpic} + 1{charm1Epic} + 1{charm2Epic} + 2{coinEpic}!");
                             }
                             else
                             {
-                                user.User.Add(3, 3);
-                                user.User.Increase("earned", 3000);
-                                int charmID = Tools.GetCharm(_itemLists, 0, 9, _rand);
-                                user.User.GainItem(charmID, 1);
-                                string currency = showEmoji switch { true => _currency[3], false => " **rubies**" };
-                                string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
-                                text.Add($"<@{user.User.ID}> earned 3{currency} + 1{charm1}");
+                                text.Add($"<@{user.User.ID}> earned 5{currencyEpic} + 1{charm1Epic} + 1{charm2Epic}!");
                             }
                             break;
                         case 4:
+                            user.User.Add(1, 4);
+                            user.User.Increase("earned", 10000);
+                            int charmIDLegendary = Tools.GetCharm(_itemLists, 1, 9, _rand);
+                            user.User.GainItem(charmIDLegendary, 1);
+                            string currencyLegendary = showEmoji switch { true => _currency[4], false => " **ambers**" };
+                            string charm1Legendary = showEmoji switch { true => _items[charmIDLegendary].Emoji, false => $" **{_items[charmIDLegendary].Name}**" };
+                            int charmID2Legendary = Tools.GetCharm(_itemLists, 1, 7, _rand);
+                            user.User.GainItem(charmID2Legendary, 1);
+                            string charm2Legendary = showEmoji switch { true => _items[charmID2Legendary].Emoji, false => $" **{_items[charmID2Legendary].Name}**"};
+                            int charmID3Legendary = Tools.GetCharm(_itemLists, 2, 17, _rand);
+                            user.User.GainItem(charmID3Legendary, 1);
+                            string charm3Legendary = showEmoji switch { true => _items[charmID3Legendary].Emoji, false => $" **{_items[charmID3Legendary].Name}**"};
                             if (Tools.CharmEffect(["LegendaryQuests"], _items, user) > 0)
                             {
-                                user.User.Add(1, 4);
-                                user.User.Increase("earned", 10000);
-                                int charmID = Tools.GetCharm(_itemLists, 1, 9, _rand);
-                                user.User.GainItem(charmID, 1);
-                                string currency = showEmoji switch { true => _currency[4], false => " **ambers**" };
-                                string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
-                                int charmID2 = Tools.GetCharm(_itemLists, 1, 7, _rand);
-                                user.User.GainItem(charmID2, 1);
-                                string charm2 = showEmoji switch { true => _items[charmID2].Emoji, false => $" **{_items[charmID2].Name}**"};
-                                int charmID3 = Tools.GetCharm(_itemLists, 2, 17, _rand);
-                                user.User.GainItem(charmID3, 1);
-                                string charm3 = showEmoji switch { true => _items[charmID3].Emoji, false => $" **{_items[charmID3].Name}**"};
-                                text.Add($"<@{user.User.ID}> earned 1{currency} + 1{charm1} + 1{charm2} + 1{charm3}");
+                                user.User.GainItem(4, 1);
+                                string coinLegendary = showEmoji switch { true => _items[4].Emoji, false => $" **{_items[4].Name}**" };
+                                text.Add($"<@{user.User.ID}> earned 1{currencyLegendary} + 1{charm1Legendary} + 1{charm2Legendary} + 1{charm3Legendary} + 1{coinLegendary}!");
                             }
                             else
                             {
-                                user.User.Add(1, 4);
-                                user.User.Increase("earned", 10000);
-                                int charmID = Tools.GetCharm(_itemLists, 1, 7, _rand);
-                                user.User.GainItem(charmID, 1);
-                                string currency = showEmoji switch { true => _currency[4], false => " **ambers**" };
-                                string charm1 = showEmoji switch { true => _items[charmID].Emoji, false => $" **{_items[charmID].Name}**" };
-                                text.Add($"<@{user.User.ID}> earned 1{currency} + 1{charm1}");
+                                text.Add($"<@{user.User.ID}> earned 1{currencyLegendary} + 1{charm1Legendary} + 1{charm2Legendary} + 1{charm3Legendary}!");
                             }
                             break;
                     }
@@ -1775,7 +1786,7 @@ public class GemBot
                     {
                         if (_rand.Next(20) < 19) continue;
                         donaters += 1;
-                        donated += _rand.Next(roll);
+                        donated += _rand.Next(roll) + 1;
                     }
                     text = "**Stream Stats**:" +
                            $"\n> {viewers} viewers" +
@@ -1801,7 +1812,7 @@ public class GemBot
             {
                 if (_rand.Next(25) < 24) continue;
                 donaters += 1;
-                donated += _rand.Next(roll);
+                donated += _rand.Next(roll) + 1;
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1825,7 +1836,7 @@ public class GemBot
             {
                 if (_rand.Next(30) < 29) continue;
                 donaters += 1;
-                donated += _rand.Next(roll);
+                donated += _rand.Next(roll) + 1;
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1849,7 +1860,7 @@ public class GemBot
             {
                 if (_rand.Next(32) < 31) continue;
                 donaters += 1;
-                donated += _rand.Next(roll);
+                donated += _rand.Next(roll) + 1;
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1873,7 +1884,7 @@ public class GemBot
             {
                 if (_rand.Next(32) < 31) continue;
                 donaters += 1;
-                donated += _rand.Next(roll);
+                donated += _rand.Next(roll) + 1;
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1897,7 +1908,7 @@ public class GemBot
             {
                 if (_rand.Next(32) < 31) continue;
                 donaters += 1;
-                donated += _rand.Next(roll);
+                donated += _rand.Next(roll) + 1;
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1921,7 +1932,7 @@ public class GemBot
             {
                 if (_rand.Next(35) < 34) continue;
                 donaters += 1;
-                donated += _rand.Next(roll);
+                donated += _rand.Next(roll) + 1;
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -1945,7 +1956,7 @@ public class GemBot
             {
                 if (_rand.Next(35) < 34) continue;
                 donaters += 1;
-                donated += _rand.Next(roll);
+                donated += _rand.Next(roll) + 1;
             }
             text = "**Stream Stats**:" +
                    $"\n> {viewers} viewers" +
@@ -2110,6 +2121,10 @@ public class GemBot
                             .WithEmote(Emote.Parse("<:stone:1287086951215796346>"));
                         break;
                 }
+                if (block.Type != BlockType.Air && block.Left >= 0 && block.MinerID != user.ID)
+                {
+                    button.WithStyle(ButtonStyle.Danger);
+                }
                 row.AddComponent(button.Build());
             }
             buttons.AddRow(row);
@@ -2156,7 +2171,8 @@ public class GemBot
 
         ComponentBuilder components = new ComponentBuilder();
         ActionRowBuilder refresh = new ActionRowBuilder()
-            .WithButton("Refresh", "craft-home", ButtonStyle.Secondary);
+            .WithButton("Refresh", "craft-home", ButtonStyle.Secondary)
+            .WithButton("View Cue", "craft-cue|view", ButtonStyle.Secondary);
         ActionRowBuilder favorites = new ActionRowBuilder()
             .WithButton("Favorites", "craft-page|fav", ButtonStyle.Success);
         ActionRowBuilder recents = new ActionRowBuilder()
@@ -2389,7 +2405,7 @@ public class GemBot
         CachedUser user = await GetUser(command.User.Id);
         user.NotificationsID++;
         int notificationsAmount = 0;
-        EmbedBuilder embay = new EmbedBuilder().WithTitle("Notifications").WithColor(new Color((uint) user.User.GetSetting("uiColor", 3287295)));;
+        EmbedBuilder embay = new EmbedBuilder().WithTitle("Notifications").WithColor(new Color((uint) user.User.GetSetting("uiColor", 3287295)));
         Dictionary<string, List<CachedUser.Notification>> notificationsDict = new();
         user.ConsolidateNotifications();
         foreach (CachedUser.Notification notification in user.Notifications)
@@ -2655,34 +2671,6 @@ public class GemBot
     }
     private async Task SettingsCommand(SocketSlashCommand command)
     {
-        SlashCommandBuilder setBuilder = new SlashCommandBuilder()
-            .WithName("setting")
-            .WithDescription("Set a setting")
-            .AddOption(new SlashCommandOptionBuilder().WithName("main")
-                .WithType(ApplicationCommandOptionType.SubCommandGroup)
-                .WithDescription("The main settings for gemBOT")
-                .AddOption(new SlashCommandOptionBuilder().WithName("auto_delete")
-                    .WithDescription("How long before command responses sent by gemBOT auto-delete (after last auto-update)")
-                    .WithType(ApplicationCommandOptionType.SubCommand)
-                    .AddOption(new SlashCommandOptionBuilder().WithName("value")
-                        .WithDescription("Set Setting: delayBeforeDelete. WARNING: commands will not delete after bot refresh.")
-                        .WithType(ApplicationCommandOptionType.Integer)
-                        .AddChoice("Never delete it", 0)
-                        .AddChoice("2 minutes", 2)
-                        .AddChoice("5 minutes", 5)
-                        .AddChoice("15 minutes", 15)
-                        .AddChoice("30 minutes", 30)
-                        .AddChoice("1 hour", 60)
-                        .AddChoice("2 hours", 120)
-                        .AddChoice("3 hours", 180)
-                        .AddChoice("5 hours", 300)
-                        .AddChoice("8 hours", 480)
-                        .AddChoice("12 hours", 720)
-                        .AddChoice("1 day", 1440)
-                        .AddChoice("2 days", 2880)
-                    )
-                )
-            );
         string group = command.Data.Options.First().Name;
         User user = await GetUser(command.User.Id);
         if (group == "view")
@@ -3185,10 +3173,12 @@ public class GemBot
                 embay.WithTitle($"Crafting Recipe {recipe.ID}");
                 embay.AddField("Details", recipe.ToString(_items, _currency));
                 ActionRowBuilder topRow = new ActionRowBuilder()
-                    .WithButton("home", "craft-home", ButtonStyle.Secondary);
+                    .WithButton("home", "craft-home", ButtonStyle.Secondary)
+                    .WithButton("<--", $"craft-recipe|{recipe.ID - 1}", disabled:recipe.ID <= 0);
                 if ((user.User.GetListData("craft_favorites")).Contains(recipe.ID))
                     topRow.WithButton("un-favorite", $"craft-fav|{recipe.ID}|n", ButtonStyle.Danger);
                 else topRow.WithButton("favorite", $"craft-fav|{recipe.ID}|y", ButtonStyle.Success);
+                topRow.WithButton("-->", $"craft-recipe|{recipe.ID + 1}", disabled: recipe.ID >= (_craftingRecipes.Count-1));
                 ActionRowBuilder craftRow = new ActionRowBuilder()
                     .WithButton("x1", $"craft-craft|{recipe.ID}|1", ButtonStyle.Primary, emoj, disabled: craftable < 1)
                     .WithButton("x5", $"craft-craft|{recipe.ID}|5", ButtonStyle.Primary, emoj, disabled: craftable < 5)
@@ -3260,7 +3250,62 @@ public class GemBot
                         throw new ButtonValueError();
                 }
                 break;
-            default:
+            case "cue":
+                if (args.Length <= 1) throw new ButtonValueError();
+                switch (args[1])
+                {
+                    case "view":
+                        Dictionary<int, int> nextCraftingDict = new ();
+                        List<int> nextCraftingOrder = new();
+                        foreach ((int cueRecipeID, int amount) in user.NextCrafting ?? new List<Tuple<int, int>>())
+                        {
+                            if (nextCraftingDict.TryAdd(cueRecipeID, amount)) nextCraftingOrder.Add(cueRecipeID);
+                            else nextCraftingDict[cueRecipeID] += amount;
+                        }
+                        List<Tuple<int, int>> nextCrafting = new();
+                        foreach (int dictKey in nextCraftingOrder)
+                        {
+                            nextCrafting.Add(new Tuple<int, int>(dictKey, nextCraftingDict[dictKey]));
+                        }
+                        user.NextCrafting = nextCrafting;
+                        EmbedBuilder cueViewEmbay = new EmbedBuilder()
+                            .WithTitle("Crafting Cue")
+                            .WithColor(new Color((uint) user.User.GetSetting("uiColor", 3287295)));
+                        string cueViewText = "Items waiting to be crafted:";
+                        foreach ((int cueRecipeID, int amount) in user.NextCrafting)
+                        {
+                            CraftingRecipe cueViewRecipe = _craftingRecipes[cueRecipeID];
+                            cueViewText += $"\n > {amount*cueViewRecipe.AmountCrafted}{_items[cueViewRecipe.ItemCrafted].Emoji} (Recipe {cueViewRecipe.ID})";
+                        }
+                        cueViewEmbay.WithDescription(cueViewText);
+                        await component.UpdateAsync((properties) =>
+                        {
+                            properties.Embed = cueViewEmbay.Build();
+                            properties.Components = new ComponentBuilder()
+                                .WithButton("home", "craft-home", ButtonStyle.Secondary)
+                                .WithButton("clear", $"craft-cue|clear|{user.NextCrafting.Count}", ButtonStyle.Danger, disabled:user.NextCrafting.Count <= 0).Build();
+                        });
+                        break;
+                    case "clear":
+                        if (args.Length <= 2) throw new ButtonValueError();
+                        if (!int.TryParse(args[2], out int cueLength)) throw new ButtonValueError();
+                        if ((user.NextCrafting ?? new List<Tuple<int, int>>()).Count != cueLength)
+                        {
+                            await component.RespondAsync(
+                                "This cue page is outdated (you have started crafting something after you pulled this up or a craft has been moved to the furnaces)",
+                                ephemeral:true);
+                            await Task.Delay(12000);
+                            await component.DeleteOriginalResponseAsync();
+                            return;
+                        }
+                        user.NextCrafting = null;
+                        await component.RespondAsync("Cleared cue! The next buttons you click to start crafting will begin crafting as soon as the current craft finishes", ephemeral:true);
+                        break;
+                    default:
+                        throw new ButtonValueError();
+                }
+                break;
+            default: 
                 throw new ButtonValueError();
         }
         return;
@@ -3324,9 +3369,17 @@ public class GemBot
             await component.UpdateAsync((properties) => { properties.Embed = wrongIdEmbay.Build(); properties.Components = null; });
             return;
         }
+        if (workID == 0)
+        {
+            EmbedBuilder hackerEmbay = new EmbedBuilder()
+                .WithTitle("Busted!")
+                .WithDescription("Unless there is a bug (unlikely) you modified the custom ID of a button. That's cheating!");
+            await component.UpdateAsync((properties) => { properties.Embed = hackerEmbay.Build(); properties.Components = null; });
+            return;
+        }
         user.LastWork = 0;
-        int mn = 10 + Tools.CharmEffect(["WorkMin", "Work", "GrindMin", "Grind", "Positive"], _items, user);
-        int mx = 16 + Tools.CharmEffect(["WorkMax", "Work", "GrindMax", "Grind", "Positive"], _items, user);
+        int mn = 12 + Tools.CharmEffect(["WorkMin", "Work", "GrindMin", "Grind", "Positive"], _items, user);
+        int mx = 20 + Tools.CharmEffect(["WorkMax", "Work", "GrindMax", "Grind", "Positive"], _items, user);
         int amnt = _rand.Next(mn, mx);
         switch (args[0])
         {
@@ -3359,7 +3412,7 @@ public class GemBot
                 break;
             case "failure":
                 Console.WriteLine(amnt);
-                amnt = _rand.Next((amnt/3)-1, (amnt/2)+1);
+                amnt = _rand.Next((amnt/3), (amnt*3)/4);
                 Console.WriteLine(amnt);
                 user.User.Add(amnt, 1);
                 string textFail = $"You gained {amnt} emeralds.";
@@ -5426,7 +5479,8 @@ public class GemBot
             {
                 foreach (MineBlock block in layer)
                 {
-                    if (block.Type == BlockType.Air || block.MinerID is null) continue;
+                    if (block is { Type: BlockType.Air, MinerID: not null }) block.MinerID = null;
+                    if (block.MinerID is null) continue;
                     try
                     {
                         CachedUser user = await GetUser((ulong)block.MinerID);
