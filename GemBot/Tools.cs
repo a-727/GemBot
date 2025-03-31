@@ -266,4 +266,11 @@ public static class Tools
         toReturn += endWith;
         return toReturn;
     }
+
+    public static int AprilFoolsYear()
+    {
+        return 2025;
+        if (DateTime.UtcNow.Day == 1 && DateTime.UtcNow.Month == 4) return DateTime.UtcNow.Year;
+        return 0;
+    }
 }

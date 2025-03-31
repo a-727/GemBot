@@ -60,7 +60,7 @@ public class MineData
             < 3000 => 5,
             <= 50000 => (ushort)(mineCount / 500),
             <= 500000 => (ushort)((mineCount - 50000)/1000 + 100),
-            _ => (ushort)((mineCount - 500000)/2000 + 550)
+            _ => (ushort)(((mineCount - 500000)/2000) + 550)
         };
         if (numChunks > 1000)
         {
@@ -80,11 +80,11 @@ public class MineData
     }
     public MineBlock GetBlock(int x, int y)
     {
-        return GetChunk(x/20).GetBlock(x%20, y);
+        return GetChunk(x/30).GetBlock(x%30, y);
     }
     public Tuple<bool, int, BlockType> Mine(int x, int y, ulong playerId, int power)
     {
-        return GetChunk(x/20).Mine(x%20, y, playerId, power);
+        return GetChunk(x/30).Mine(x%30, y, playerId, power);
     }
 }
 
@@ -100,13 +100,13 @@ public class MineChunk
             Left = 0,
             Type = BlockType.Air,
         };
-        List<List<MineBlock>> layers = [[air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy()]];
-        for (int layer = 1; layer < 251; layer++)
+        List<List<MineBlock>> layers = [[air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy()]];
+        for (int layer = 1; layer < 151; layer++)
         {
             MineBlock stone = new MineBlock
             {
-                Durability = 60*(uint)layer+300, //1 min + 12 sec per layer (on power 5)
-                DropAmount = (byte)(layer + random.Next(6))
+                Durability = 60*(uint)layer+50, //1 min + 2 sec per layer (on power 5)
+                DropAmount = (byte)(6 + random.Next(layer))
             };
             MineBlock diamond = new MineBlock
             {
@@ -183,7 +183,7 @@ public class MineChunk
             List<MineBlock> thisLayer = [];
             for (int i = 0; i < 20; i++)
             {
-                thisLayer.Add((random.Next(layer, layer*3+540) switch
+                thisLayer.Add((random.Next(layer, layer*3+840) switch
                 {
                     <= 200 => air, //200
                     <= 850 => stone, //650
