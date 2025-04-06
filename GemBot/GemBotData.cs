@@ -1,5 +1,6 @@
 using Discord.Rest;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
 
 namespace GemBot;
 
@@ -285,9 +286,9 @@ public class User
             }
         }
     }
-    public async Task Save(ulong id = default)
+    public async Task Save(ulong id = 0)
     {
-        if (id == default)
+        if (id == 0)
         {
             id = ID;
         }
@@ -604,7 +605,7 @@ public class CraftingRecipe
     
     public class RecipeRequirements
     {
-        public int Item { get; set; } = 39; //stone coin.
+        public int Item { get; set; } = 46; //stone coin.
         public int Amount { get; set; } = 1;
     }
 
@@ -642,6 +643,190 @@ public class CraftingRecipe
         }
     }
 }
+
+public class Server
+{
+    public bool OngoingEvent = false;
+    public PortalEvent? OngoingPortalEvent = null;
+    public ulong ID;
+    public Server(ulong id)
+    {
+        ID = id;
+    }
+    public async Task Save()
+    {
+        await File.WriteAllTextAsync($"Data/Servers/{ID}.json", JsonConvert.SerializeObject(this));
+    }
+    public class PortalEvent
+    {
+        public MineChunk Chunk;
+        public Dictionary<ulong, PlayerMineLocation> Locations;
+        public ulong PlayerID;
+        public int SpawnX;
+        public int SpawnY;
+        public PortalEvent(MineChunk chunk, ulong eventTriggerer, int spawnX, int spawnY)
+        {
+            Chunk = chunk;
+            PlayerID = eventTriggerer;
+            SpawnX = spawnX;
+            SpawnY = spawnY;
+        }
+        public PortalEvent(int serverUsers, ulong eventTriggerer)
+        {
+            PlayerID = eventTriggerer;
+            SpawnX = 2;
+            SpawnY = (serverUsers + 5) / 2;
+            Chunk = MineChunk.GeneratePortalMineChunk(serverUsers + 5, SpawnX, SpawnY);
+        }
+
+        [JsonConstructor]
+        public PortalEvent(MineChunk chunk, Dictionary<ulong, PlayerMineLocation> locations, ulong playerID, int spawnX, int spawnY)
+        {
+            Chunk = chunk;
+            Locations = locations;
+            PlayerID = playerID;
+            SpawnX = spawnX;
+            SpawnY = spawnY;
+        }
+
+        public class PlayerMineLocation
+        {
+            public int X;
+            public int Y;
+            public int MiningAtX;
+            public int MiningAtY;
+            public bool Mining;
+        }
+        public PlayerMineLocation GetMineLocation(ulong playerID)
+        {
+            if (Locations.TryGetValue(playerID, out PlayerMineLocation? location))
+                return location;
+            Locations.Add(playerID, new PlayerMineLocation(){X = SpawnX, Y = SpawnY, MiningAtX = SpawnX, MiningAtY = SpawnY, Mining = false});
+            return Locations[playerID];
+        }
+        public async Task<bool> DoTicks(Func<ulong, Task<CachedUser>> getUser)
+        {
+            foreach (MineBlock[] layer in Chunk.Blocks)
+            {
+                foreach (MineBlock block in layer)
+                {
+                    if (block is { Type: BlockType.Air, MinerID: not null }) block.MinerID = null;
+                    if (block.MinerID is null) continue;
+                    try
+                    {
+                        CachedUser user = await getUser((ulong)block.MinerID);
+                        var (mined, amountDropped, type) = block.Mine((ulong)block.MinerID, (user.User.ID== PlayerID) ? 3:2);
+                        if (mined)
+                        {
+                            GetMineLocation(user.User.ID).Mining = false;
+                            bool dropsItem = type switch
+                            {
+                                BlockType.Air => true,
+                                BlockType.Stone => true,
+                                BlockType.Rubies => false,
+                                BlockType.Sapphires => false,
+                                BlockType.Amber => false,
+                                BlockType.RubyCoin => true,
+                                BlockType.SapphireKey => true,
+                                BlockType.Gold => true,
+                                BlockType.Portal => true,
+                                BlockType.EventScroll => true,
+                                _ => true
+                            };
+                            if (dropsItem)
+                            {
+                                int itemId = type switch
+                                {
+                                    BlockType.Air => 39,
+                                    BlockType.Stone => 39,
+                                    BlockType.RubyCoin => 3,
+                                    BlockType.SapphireKey => 18,
+                                    BlockType.Gold => 54,
+                                    BlockType.EventScroll => 52,
+                                    BlockType.Portal => 53,
+                                    _ => 39
+                                };
+                                user.User.GainItem(itemId, amountDropped);
+                                user.Notifications.Add(new CachedUser.Notification(itemId, amountDropped, "gained from a server event"));
+                            }
+                            else
+                            {
+                                int value = type switch
+                                {
+                                    BlockType.Diamonds => 0,
+                                    BlockType.Emeralds => 1,
+                                    BlockType.Sapphires => 2,
+                                    BlockType.Rubies => 3,
+                                    BlockType.Amber => 4,
+                                    _ => 0
+                                };
+                                user.User.Add(amountDropped, value);
+                                user.Notifications.Add(new CachedUser.Notification((-value)-1, amountDropped, "mined"));
+                            }
+                            await user.User.Save();
+                        }
+                    }
+                    catch(Exception e){Console.WriteLine(e);}
+                }
+            }
+            for (int i = 0; i < Chunk.Blocks.Length && Chunk.Blocks.Length > 5; i++)
+            {
+                MineBlock[] thisLayer = Chunk.Blocks[i];
+                if (thisLayer[0].Type != BlockType.Air || thisLayer[1].Type != BlockType.Air ||
+                    thisLayer[2].Type != BlockType.Air || thisLayer[3].Type != BlockType.Air ||
+                    thisLayer[4].Type != BlockType.Air) continue;
+                List<MineBlock[]> dat = Chunk.Blocks.ToList();
+                dat.RemoveAt(i);
+                int? closestAirX = null;
+                int? closestAirY = null;
+                for (int y = 0; y < dat.Count; y++)
+                {
+                    for (int x = 0; x < dat[y].Length; x++)
+                    {
+                        if (dat[y][x].Type != BlockType.Air) continue;
+                        if (!(Math.Abs(i - y) < Math.Abs(i - (closestAirY ?? 0)) && closestAirY == null)) continue;
+                        closestAirY = y;
+                        closestAirX = x;
+                    }
+                }
+                if (closestAirX == null || closestAirY == null)
+                    continue;
+                foreach (PlayerMineLocation location in Locations.Values)
+                {
+                    if (location.Y == i)
+                    {
+                        location.Y = (int)closestAirY;
+                        location.X = (int)closestAirX;
+                    }
+                    if (location.MiningAtY == i)
+                    {
+                        location.MiningAtY = (int)closestAirY;
+                        location.MiningAtX = (int)closestAirX;
+                    }
+                    if (location.Y > i) location.Y--;
+                    if (location.MiningAtY > i) location.MiningAtY--;
+                }
+                Chunk.Blocks = dat.ToArray();
+                i--;
+            }
+            if (Chunk.Blocks.Length > 5) return false;
+            while (Chunk.Blocks.Length < 5)
+            {
+                MineBlock air = new MineBlock()
+                {
+                    Durability = 1,
+                    Left = 0,
+                    Type = BlockType.Air
+                };
+                List<MineBlock[]> layers = Chunk.Blocks.ToList();
+                layers.Add([air.Copy(), air.Copy(), air.Copy(), air.Copy(), air.Copy()]);
+                Chunk.Blocks = layers.ToArray();
+            }
+            return Chunk.Blocks.All(layer => layer.All(block => block.Type == BlockType.Air));
+        }
+    }
+}
+
 
 public class MagikReward
 { 

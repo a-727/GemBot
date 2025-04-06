@@ -23,56 +23,32 @@ public static class Tools
         uint t = (uint)Math.Floor((DateTime.UtcNow - new DateTime(2024, 6, 1)).TotalDays);
         return t;
     }
-    public static string ProgressBar(int done, int total, bool full = true)
+    public static string ProgressBar(int done, int total, int width)
     {
-        if (full)
+        string[] start = ["<:progress1E:1287084674648375419>", "<:progress1P:1287084753438244906>", "<:progress1H:1287084728268226690>", "<:progress1F:1287084706667561062>", "<:progress1C:1287084653379063818>"];
+        string[] middle = ["<:progress2E:1287084821515993270>", "<:progress2P:1287084937635172372>", "<:progress2H:1287084885617541263>", "<:progress2M:1287084910271795341>", "<:progress2F:1287084849227894915>", "<:progress2C:1287084797490888848>"];
+        string[] end = ["<:progress3E:1287084980190838959>", "<:progress3P:1287085204875513886>", "<:progress3H:1287085077305753671>", "<:progress3M:1287085165037748357>", "<:progress3F:1287085036998361181>"];
+        int tPips = width * 4 - 1;
+        int cPips = (done*tPips) / total;
+        int cIndex =0;
+        if (width < 2)
         {
-            int percentage = done * 100 / total;
-            string toReturn = percentage switch
-            {
-                0 =>
-                    "<:progress1E:1287084674648375419><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
-                <= 10 =>
-                    "<:progress1P:1287084753438244906><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
-                <= 20 =>
-                    "<:progress1H:1287084728268226690><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
-                <= 30 =>
-                    "<:progress1F:1287084706667561062><:progress2E:1287084821515993270><:progress3E:1287084980190838959>",
-                <= 40 =>
-                    "<:progress1C:1287084653379063818><:progress2P:1287084937635172372><:progress3E:1287084980190838959>",
-                <= 50 =>
-                    "<:progress1C:1287084653379063818><:progress2H:1287084885617541263><:progress3E:1287084980190838959>",
-                <= 60 =>
-                    "<:progress1C:1287084653379063818><:progress2M:1287084910271795341><:progress3E:1287084980190838959>",
-                <= 70 =>
-                    "<:progress1C:1287084653379063818><:progress2F:1287084849227894915><:progress3E:1287084980190838959>",
-                <= 80 =>
-                    "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3P:1287085204875513886>",
-                <= 90 =>
-                    "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3H:1287085077305753671>",
-                < 100 =>
-                    "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3M:1287085165037748357>",
-                _ =>
-                    "<:progress1C:1287084653379063818><:progress2C:1287084797490888848><:progress3F:1287085036998361181>"
-            };
-            return toReturn;
+            throw new ArgumentException("Width must be at least 2");
         }
-        else
+        string toReturn = string.Empty;
+        cIndex = Math.Min(start.Length - 2, cPips);
+        cPips -= cIndex;
+        if (cPips > 0) cIndex++;
+        toReturn += start[cIndex];
+        for (int i = 1; i < width - 1; i++)
         {
-            int percentage = done * 100 / total;
-            string toReturn = percentage switch
-            {
-                0 => "<:progress1E:1287084674648375419><:progress3E:1287084980190838959>",
-                <= 17 => "<:progress1P:1287084753438244906><:progress3E:1287084980190838959>",
-                <= 33 => "<:progress1H:1287084728268226690><:progress3E:1287084980190838959>",
-                <= 50 => "<:progress1F:1287084706667561062><:progress3E:1287084980190838959>",
-                <= 66 => "<:progress1C:1287084653379063818><:progress3P:1287085204875513886>",
-                <= 83 => "<:progress1C:1287084653379063818><:progress3H:1287085077305753671>",
-                < 100 => "<:progress1C:1287084653379063818><:progress3M:1287085165037748357>",
-                _ => "<:progress1C:1287084653379063818><:progress3F:1287085036998361181>"
-            };
-            return toReturn;
+            cIndex = Math.Min(middle.Length - 2, cPips);
+            cPips -= cIndex;
+            if (cPips > 0) cIndex++;
+            toReturn += middle[cIndex];
         }
+        toReturn += end[cPips];
+        return toReturn;
     }
     public static async Task<CachedUser> UpdateTutorial(string done, List<Tutorial> tutorials, CachedUser user, SocketSlashCommand command)
     {
@@ -222,7 +198,14 @@ public static class Tools
     }
     public static bool VerifyOriginalUse(SocketMessageComponent component) //ONLY WORKS IF COMPONENT IS IN INCLUDED IN AN INTERACTION
     {
-        return component.User.Id == component.Message.Interaction.User.Id;
+        try
+        {
+            return component.User.Id == component.Message.Interaction.User.Id;
+        }
+        catch (NullReferenceException)
+        {
+            return true; //If anything is null, this means that the message is ephemeral or deleted (most likely ephemeral)
+        }
     }
     public static int TotalEmbedLength(EmbedBuilder embed)
     {
@@ -269,8 +252,18 @@ public static class Tools
 
     public static int AprilFoolsYear()
     {
-        return 2025;
         if (DateTime.UtcNow.Day == 1 && DateTime.UtcNow.Month == 4) return DateTime.UtcNow.Year;
         return 0;
+    }
+    public static IEmote ParseEmote(string emote)
+    {
+        try
+        {
+            return Emote.Parse(emote);
+        }
+        catch (ArgumentException)
+        {
+            return Emoji.Parse(emote);
+        }
     }
 }

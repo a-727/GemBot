@@ -81,7 +81,7 @@ public class DailyTokenRewards
             int index = rewards.FindIndex((reward) =>
             {
                 if (reward is not DailyTokenRewardItem item) return false;
-                return item.Item == id;
+                return item.Item == id + value;
             });
             if (index == -1) rewards.Add(new DailyTokenRewardItem(id + value));
             else rewards[index].Amount++;

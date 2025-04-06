@@ -17,6 +17,7 @@
       <Folder Include="Data\Drops\" />
       <Folder Include="Data\Mine\Chunks\" />
       <Folder Include="Data\OldUsers\" />
+      <Folder Include="Data\Servers\" />
       <Folder Include="Data\Users\" />
       <Folder Include="UnitTests\Code\" />
       <Folder Include="UnitTests\Data\" />
